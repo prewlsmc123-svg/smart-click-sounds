@@ -8,6 +8,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -104,7 +105,7 @@ static std::string trailingNumber(std::string name) {
 	return name.substr(i);
 }
 
-static void loadDir(fs::path const& dir, std::string const& prefix, int list, std::vector<std::string>& nums, bool clean) {
+static void loadDir(fs::path const& dir, std::string const& prefix, int list, std::vector<std::string>& nums, bool clean, std::string const& tag = "") {
 	std::error_code ec;
 	if (!fs::is_directory(dir, ec)) return;
 	std::vector<fs::path> files;
@@ -123,7 +124,7 @@ static void loadDir(fs::path const& dir, std::string const& prefix, int list, st
 		if (clean) scs::cleanTone(x);
 		out.push_back({nullptr, scs::loudnessDB(x.data(), x.size(), scs::kRate), -1});
 		g_pack.pcm[list].push_back(std::move(x));
-		nums.push_back(trailingNumber(f.filename().string()));
+		nums.push_back(tag + trailingNumber(f.filename().string()));
 	}
 }
 
@@ -136,14 +137,31 @@ static void pairUp(std::vector<scs::Sound>& presses, std::vector<std::string> co
 	}
 }
 
-static fs::path resolvePackFolder() {
-	auto custom = Mod::get()->getSettingValue<std::string>("pack-folder");
+// sound sets bundled with the mod; a custom folder setting overrides them
+enum class SoundSet { Both, Reference, Mine, AppPack, Custom };
+
+static SoundSet soundSet() {
+	auto mod = Mod::get();
+	if (!mod->getSettingValue<std::string>("pack-folder").empty()) return SoundSet::Custom;
+	auto v = mod->getSettingValue<std::string>("sounds");
+	if (v == "Reference clicks only") return SoundSet::Reference;
+	if (v == "My recorded clicks only") return SoundSet::Mine;
+	if (v == "My GDClickbot app pack") return SoundSet::AppPack;
+	return SoundSet::Both;
+}
+
+static void loadFolder(fs::path const& folder, bool clean, std::vector<std::string> (&nums)[4], std::string const& tag) {
 	std::error_code ec;
-	if (!custom.empty()) return fs::path(custom);
-	auto docs = documentsPack();
-	if (!docs.empty() && fs::is_directory(docs / "player1" / "clicks", ec) && !fs::is_empty(docs / "player1" / "clicks", ec))
-		return docs;
-	return Mod::get()->getResourcesDir(); // the pack bundled with the mod
+	if (fs::is_directory(folder / "player1" / "clicks", ec)) { // clickpack layout
+		auto p = folder / "player1";
+		loadDir(p / "clicks", "", 0, nums[0], clean, tag);
+		loadDir(p / "releases", "", 1, nums[1], clean, tag);
+		loadDir(p / "softclicks", "", 2, nums[2], clean, tag);
+		loadDir(p / "softreleases", "", 3, nums[3], clean, tag);
+	} else if (fs::is_directory(folder / "clicks", ec)) { // plain clicks/releases folders
+		loadDir(folder / "clicks", "", 0, nums[0], clean, tag);
+		loadDir(folder / "releases", "", 1, nums[1], clean, tag);
+	}
 }
 
 static int strength() {
@@ -164,36 +182,48 @@ static void applySettings() {
 
 static void ensureLoaded() {
 	auto mod = Mod::get();
-	auto folder = resolvePackFolder();
+	auto set = soundSet();
 	bool clean = mod->getSettingValue<bool>("clean-tone");
 	int variations = int(std::clamp<int64_t>(mod->getSettingValue<int64_t>("variations"), 1, 200000));
-	auto key = folder.string() + "|" + std::to_string(clean) + "|" + std::to_string(variations);
+	auto key = std::to_string(int(set)) + "|" + mod->getSettingValue<std::string>("pack-folder") + "|" +
+	           std::to_string(clean) + "|" + std::to_string(variations);
 	if (key == g_loadedKey) { applySettings(); return; }
 	g_engine = scs::Engine{};
 	g_pack = scs::Pack{};
 	g_engine.variations = variations;
 	applySettings();
-	std::vector<std::string> cn, rn, scn, srn;
-	std::error_code ec;
-	if (fs::is_directory(folder / "player1" / "clicks", ec)) { // clickpack layout
-		auto p = folder / "player1";
-		loadDir(p / "clicks", "", 0, cn, clean);
-		loadDir(p / "releases", "", 1, rn, clean);
-		loadDir(p / "softclicks", "", 2, scn, clean);
-		loadDir(p / "softreleases", "", 3, srn, clean);
-	} else if (fs::is_directory(folder / "clicks", ec)) { // plain clicks/releases folders
-		loadDir(folder / "clicks", "", 0, cn, clean);
-		loadDir(folder / "releases", "", 1, rn, clean);
-	} else { // bundled pack: flat files
-		loadDir(folder, "scs_click_", 0, cn, clean);
-		loadDir(folder, "scs_release_", 1, rn, clean);
+	std::vector<std::string> nums[4];
+	auto res = mod->getResourcesDir();
+	if (set == SoundSet::Both || set == SoundSet::Reference) {
+		loadDir(res, "scs_click_", 0, nums[0], clean, "ref");
+		loadDir(res, "scs_release_", 1, nums[1], clean, "ref");
 	}
-	pairUp(g_engine.clicks, cn, rn);
-	pairUp(g_engine.softClicks, scn, srn);
+	if (set == SoundSet::Both || set == SoundSet::Mine) {
+		loadDir(res, "scs_mine_click_", 0, nums[0], clean, "mine");
+		loadDir(res, "scs_mine_release_", 1, nums[1], clean, "mine");
+		loadDir(res, "scs_mine_softclick_", 2, nums[2], clean, "mine");
+		loadDir(res, "scs_mine_softrelease_", 3, nums[3], clean, "mine");
+		// 1,000 extra clicks generated from your recordings
+		loadDir(res, "scs_minex_click_", 0, nums[0], clean, "minex");
+		loadDir(res, "scs_minex_release_", 1, nums[1], clean, "minex");
+		loadDir(res, "scs_minex_softclick_", 2, nums[2], clean, "minex");
+		loadDir(res, "scs_minex_softrelease_", 3, nums[3], clean, "minex");
+	}
+	if (set == SoundSet::AppPack) loadFolder(documentsPack(), clean, nums, "app");
+	if (set == SoundSet::Custom) loadFolder(fs::path(mod->getSettingValue<std::string>("pack-folder")), clean, nums, "custom");
+	if (g_engine.clicks.empty()) { // nothing found: fall back to the bundled reference clicks
+		for (auto& n : nums) n.clear();
+		g_pack = scs::Pack{};
+		g_engine.clicks.clear(); g_engine.releases.clear(); g_engine.softClicks.clear(); g_engine.softReleases.clear();
+		loadDir(res, "scs_click_", 0, nums[0], clean, "ref");
+		loadDir(res, "scs_release_", 1, nums[1], clean, "ref");
+	}
+	pairUp(g_engine.clicks, nums[0], nums[1]);
+	pairUp(g_engine.softClicks, nums[2], nums[3]);
 	g_engine.load();
 	g_loadedKey = key;
-	log::info("Smart Click Sounds: {} clicks, {} releases, {} light clicks from {} ({} variations each)",
-	          g_engine.clicks.size(), g_engine.releases.size(), g_engine.softClicks.size(), folder.string(), variations);
+	log::info("Smart Click Sounds: {} clicks, {} releases, {} light clicks ({} variations each)",
+	          g_engine.clicks.size(), g_engine.releases.size(), g_engine.softClicks.size(), variations);
 }
 
 // ---------- playback ----------
@@ -253,6 +283,8 @@ static void play(int player, int kind, scs::Play const& p) {
 	if (sys->playSound(snd, g_group, true, &ch) != FMOD_OK || !ch) { snd->release(); return; }
 	float vol = float(Mod::get()->getSettingValue<int64_t>("volume")) / 100.f;
 	ch->setVolume(p.gain * vol);
+	float semis = float(Mod::get()->getSettingValue<double>("pitch"));
+	if (semis != 0) ch->setPitch(std::pow(2.f, semis / 12.f));
 	{
 		unsigned long long parent = 0, own = 0;
 		ch->getDSPClock(&own, &parent);
@@ -290,7 +322,8 @@ static void startRoomTone() {
 	}
 	if (!g_roomSound) return;
 	if (sys->playSound(g_roomSound, g_group, true, &g_roomChannel) != FMOD_OK || !g_roomChannel) { g_roomChannel = nullptr; return; }
-	float vol = float(mod->getSettingValue<int64_t>("volume")) / 100.f;
+	float vol = float(mod->getSettingValue<int64_t>("volume")) / 100.f *
+	            float(mod->getSettingValue<int64_t>("room-tone-volume")) / 100.f;
 	g_roomChannel->setVolume(vol);
 	g_roomChannel->setPaused(false);
 }
@@ -349,5 +382,15 @@ class $modify(SCSPlayLayer, PlayLayer) {
 	void resetLevel() {
 		PlayLayer::resetLevel();
 		g_engine.resetAll();
+	}
+};
+
+// load the sounds once at the main menu, so entering a level doesn't stall
+class $modify(SCSMenuLayer, MenuLayer) {
+	bool init() {
+		if (!MenuLayer::init()) return false;
+		static bool once = false;
+		if (!once) { once = true; ensureLoaded(); }
+		return true;
 	}
 };

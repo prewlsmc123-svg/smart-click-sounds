@@ -3,14 +3,19 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.3.0",
+	"version": "v1.4.0",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
 	"description": "Realistic click sounds that react to how you click: lighter spam, matched releases, no repeats.",
-	"tags": ["gameplay", "customization"],
+	"tags": [
+		"gameplay",
+		"customization"
+	],
 	"resources": {
-		"files": ["resources/pack/*.wav"]
+		"files": [
+			"resources/pack/*.wav"
+		]
 	},
 	"settings": {
 		"enabled": {
@@ -24,21 +29,57 @@
 			"default": 100,
 			"min": 0,
 			"max": 200,
-			"control": { "slider": true }
+			"control": {
+				"slider": true
+			}
 		},
 		"spam": {
 			"name": "Spam / fast clicks",
 			"description": "How much lighter fast clicks sound. Clicks 150 ms+ apart are always full strength.",
 			"type": "string",
 			"default": "Like a real hand (recommended)",
-			"one-of": ["Same as normal clicks", "A little quieter", "Like a real hand (recommended)", "Very quiet"]
+			"one-of": [
+				"Same as normal clicks",
+				"A little quieter",
+				"Like a real hand (recommended)",
+				"Very quiet"
+			]
 		},
 		"variation": {
 			"name": "Variation",
 			"description": "How different each variation is: blends of similar recorded clicks plus small pitch, tone, hit and ring changes.",
 			"type": "string",
 			"default": "Natural (recommended)",
-			"one-of": ["Off", "Natural (recommended)", "More"]
+			"one-of": [
+				"Off",
+				"Natural (recommended)",
+				"More"
+			]
+		},
+		"sounds": {
+			"name": "Sounds",
+			"description": "Which recorded clicks to use. 'Both' mixes the reference clicks with the ones you recorded (they sound alike after Clean tone).",
+			"type": "string",
+			"default": "Both (recommended)",
+			"one-of": [
+				"Both (recommended)",
+				"Reference clicks only",
+				"My recorded clicks only",
+				"My GDClickbot app pack"
+			]
+		},
+		"pitch": {
+			"name": "Pitch (semitones)",
+			"description": "Higher or lower clicks. 0 = as recorded.",
+			"type": "float",
+			"default": 0,
+			"min": -12,
+			"max": 12,
+			"control": {
+				"slider": true,
+				"slider-step": 0.5,
+				"input": true
+			}
 		},
 		"variations": {
 			"name": "Click variations",
@@ -55,10 +96,21 @@
 			"default": true
 		},
 		"room-tone": {
-			"name": "Room tone (for showcase recordings)",
+			"name": "Room tone",
 			"description": "Adds the faint background hiss of a real room under the clicks while you're in a level, like a real mic recording (never total silence between clicks).",
 			"type": "bool",
-			"default": false
+			"default": true
+		},
+		"room-tone-volume": {
+			"name": "Room tone volume (%)",
+			"description": "100% = a quiet room (-60 dB).",
+			"type": "int",
+			"default": 100,
+			"min": 0,
+			"max": 400,
+			"control": {
+				"slider": true
+			}
 		},
 		"releases": {
 			"name": "Release sounds",
@@ -73,7 +125,7 @@
 		},
 		"pack-folder": {
 			"name": "Click pack folder",
-			"description": "Leave empty to use your GDClickbot pack (Documents\\GDClickbot\\clickpack) if it exists, otherwise the pack built into this mod. Or paste any clickpack folder (with player1\\clicks, or clicks + releases folders).",
+			"description": "Optional: any clickpack folder (with player1\\\\clicks, or clicks + releases folders). When set, it's used instead of the Sounds setting.",
 			"type": "string",
 			"default": ""
 		}
