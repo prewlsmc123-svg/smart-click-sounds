@@ -51,6 +51,7 @@ static void loadList(fs::path dir, std::vector<Sound>& out, std::vector<Buf>& pc
 		Buf x = readWav(f);
 		if (x.empty()) continue;
 		if (countHits(x) > 1) continue;
+		if (preHitMs(x) > 3.f) continue; // rattle: small hit before the main one
 		cleanTone(x);
 		out.push_back({nullptr, loudnessDB(x.data(), x.size(), kRate), -1});
 		pcm.push_back(std::move(x));

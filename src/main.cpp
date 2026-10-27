@@ -123,6 +123,7 @@ static void loadDir(fs::path const& dir, std::string const& prefix, int list, st
 		scs::Buf x = readWav(f);
 		if (x.size() < 100) continue;
 		if (scs::countHits(x) > 1) continue; // sounds like overlapping clicks: skip
+		if (scs::preHitMs(x) > 3.f) continue; // rattle: small hit before the main one
 		if (clean) scs::cleanTone(x);
 		out.push_back({nullptr, scs::loudnessDB(x.data(), x.size(), scs::kRate), -1});
 		g_pack.pcm[list].push_back(std::move(x));

@@ -120,6 +120,30 @@ inline int countHits(Buf const& in) {
 	return hits;
 }
 
+// A "rattle": a smaller hit a few ms before the main one (finger/switch bounce).
+// Returns how many ms before the loudest hit the sound already got within 16 dB
+// of it. A clean click is under ~2 ms; a rattle is 3-15 ms.
+inline float preHitMs(Buf const& in) {
+	size_t n = std::min<size_t>(in.size(), kRate * 80 / 1000);
+	Buf d(in.begin(), in.begin() + n);
+	Biquad::highpass(3000).run(d);
+	Biquad::highpass(3000).run(d);
+	const size_t w = 12;
+	std::vector<float> env(n, 0.f);
+	double acc = 0;
+	for (size_t i = 0; i < n; i++) {
+		acc += double(d[i]) * d[i];
+		if (i >= w) acc -= double(d[i - w]) * d[i - w];
+		env[i] = float(std::sqrt(std::max(acc, 0.0) / w));
+	}
+	size_t lim = std::min<size_t>(n, kRate * 50 / 1000), pk = 0;
+	for (size_t i = 0; i < lim; i++) if (env[i] > env[pk]) pk = i;
+	float thr = env[pk] * 0.158f; // -16 dB
+	size_t lo = pk > size_t(kRate * 15 / 1000) ? pk - kRate * 15 / 1000 : 0;
+	for (size_t i = lo; i < pk; i++) if (env[i] > thr) return float(pk - i) * 1000.f / kRate;
+	return 0.f;
+}
+
 struct VariantParams {
 	int donor = -1;
 	float weight = 0, pitch = 1, tiltDB = 0, attack = 0, damp = 0;
