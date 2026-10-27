@@ -27,6 +27,7 @@ static scs::Pack g_pack;
 static std::string g_loadedKey = "\x01";
 static FMOD::ChannelGroup* g_group = nullptr;
 static FMOD::Channel* g_last[2][2] = {};
+static unsigned long long g_relStart[2] = {}; // when each player's latest release starts (group DSP clock)
 struct Live { FMOD::Sound* sound; FMOD::Channel* channel; };
 static std::vector<Live> g_live; // sounds we created; released once they finish
 static FMOD::Sound* g_roomSound = nullptr;
@@ -237,14 +238,26 @@ static void play(int player, int kind, scs::Play const& p) {
 			prev->setDelay(0, parent + fade, true);
 		}
 	}
+	// a new press while this player's (humanized, delayed) release hasn't started
+	// yet: a finger can't press again before letting go, so drop that release
+	if (kind == 0) {
+		if (auto rel = g_last[player][1]) {
+			unsigned long long now = 0;
+			if (g_group->getDSPClock(&now, nullptr) == FMOD_OK && g_relStart[player] > now) {
+				rel->stop();
+				g_last[player][1] = nullptr;
+			}
+		}
+	}
 	FMOD::Channel* ch = nullptr;
 	if (sys->playSound(snd, g_group, true, &ch) != FMOD_OK || !ch) { snd->release(); return; }
 	float vol = float(Mod::get()->getSettingValue<int64_t>("volume")) / 100.f;
 	ch->setVolume(p.gain * vol);
-	if (p.delay > 0) {
-		unsigned long long parent = 0;
-		if (ch->getDSPClock(nullptr, &parent) == FMOD_OK)
-			ch->setDelay(parent + (unsigned long long)(p.delay * rate), 0, false);
+	{
+		unsigned long long parent = 0, own = 0;
+		ch->getDSPClock(&own, &parent);
+		if (p.delay > 0) ch->setDelay(parent + (unsigned long long)(p.delay * rate), 0, false);
+		if (kind == 1) g_relStart[player] = own + (unsigned long long)(p.delay * rate);
 	}
 	ch->setPaused(false);
 	g_last[player][kind] = ch;

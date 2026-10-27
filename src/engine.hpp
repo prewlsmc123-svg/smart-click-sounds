@@ -148,18 +148,20 @@ public:
 
 	// press loudness (dB) from how long the finger was up
 	float upTimeDB(double up) const {
-		if (up >= 0.15) return 0;
-		double f = up > 0.04 ? std::log(up / 0.04) / std::log(0.15 / 0.04) : 0;
+		if (up >= 0.16) return 0;
+		double f = up > 0.035 ? std::log(up / 0.035) / std::log(0.16 / 0.035) : 0;
 		f = f * f * (3 - 2 * f);
 		float db = float(spamMinDB * (1 - f));
 		if (up < 0.025) db += spamMinDB < 0 ? -3.f : 0.f; // micro
 		return db;
 	}
-	// release loudness change from hold time
+	// release loudness change from hold time (measured on two real sessions,
+	// mouse and keyboard, which agree): quick taps let go hard, long holds softly
 	static float holdDB(double hold) {
-		if (hold < 0.06) return 2.f;
-		if (hold < 0.12) return float(2 * (0.12 - hold) / 0.06);
-		return float(-2 * std::min(1.0, (hold - 0.12) / 0.18));
+		if (hold <= 0.04) return 5.f;
+		if (hold <= 0.065) return float(5 * (0.065 - hold) / 0.025);
+		if (hold <= 0.14) return float(-7 * (hold - 0.065) / 0.075);
+		return -7.f;
 	}
 
 	std::optional<Play> press(int player, double t) {
@@ -216,13 +218,21 @@ public:
 		s.lastRelease = t;
 		if (s.ghost || !playReleases) return std::nullopt;
 		Play p;
-		p.delay = std::max(0.0, s.pressAt + 0.035 - t);
+		// a real finger holds at least ~50 ms (measured: 90% of holds > 56 ms), so a
+		// bot's 1-tick tap gets a human release 50-65 ms after the press, unless the
+		// next press comes first
+		double hold = t - s.pressAt;
+		if (hold < 0.05) {
+			double want = std::uniform_real_distribution<double>(0.05, 0.065)(rng);
+			p.delay = std::max(0.0, s.pressAt + want - t);
+			hold = want;
+		}
 		p.pressList = s.list;
 		p.pressVariation = s.variation;
 		// a release only loosely follows its press's strength (real: ~0.4 correlation)
-		float relDB = holdDB(t - s.pressAt) - 0.6f * s.drift;
-		if (gainVarDB > 0) relDB += std::normal_distribution<float>(0, gainVarDB * 0.85f)(rng);
-		float adj = std::pow(10.f, std::clamp(relDB, -9.f, 6.f) / 20.f);
+		float relDB = holdDB(hold) - 0.6f * s.drift;
+		if (gainVarDB > 0) relDB += std::normal_distribution<float>(0, gainVarDB * 1.1f)(rng);
+		float adj = std::pow(10.f, std::clamp(relDB, -12.f, 8.f) / 20.f);
 		auto const& presses = s.list == 2 ? softClicks : clicks;
 		int pb = s.variation % int(presses.size());
 		if (presses[pb].partner >= 0) { // the release recorded with this click

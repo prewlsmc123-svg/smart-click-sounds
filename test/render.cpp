@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
 		if (down) { presses++; varUse[pl->variation]++; }
 		long start = long((t + pl->delay) * kRate);
 		int kind = down ? 0 : 1;
+		if (kind == 0 && last[q][1] >= 0 && voices[last[q][1]].start > start) voices[last[q][1]].s.clear(); // release not started yet
 		if (last[q][kind] >= 0) voices[last[q][kind]].stop = start;
 		voices.push_back({pk.render(e, *pl, strength), start, -1, pl->gain});
 		last[q][kind] = long(voices.size()) - 1;

@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
 			rels++;
 			if (lastPressBase[p2] >= 0 && e.clicks[lastPressBase[p2]].partner >= 0) ownable++;
 			if (lastPressBase[p2] >= 0 && e.clicks[lastPressBase[p2]].partner == p->base && p->variation == p->pressVariation) own++;
-			CHECK(p->delay >= 0 && p->delay <= 0.035, "bad delay");
+			CHECK(p->delay >= 0 && p->delay <= 0.066, "bad delay");
 		}
 	}
 	float maxJump = g_maxJump;
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
 	CHECK(maxJump < 10, "jump too big");
 	// up-time rule: spam (finger up 40 ms) much lighter than relaxed (300 ms up)
 	CHECK(e.upTimeDB(0.3) == 0 && e.upTimeDB(0.04) < -8 && e.upTimeDB(0.02) < e.upTimeDB(0.04), "up-time curve");
-	CHECK(Engine::holdDB(0.04) > 0 && Engine::holdDB(0.4) < 0, "hold curve");
+	CHECK(Engine::holdDB(0.03) == 5 && Engine::holdDB(0.065) == 0 && Engine::holdDB(0.3) == -7, "hold curve");
 	// a variation always renders the same and differs from its original
 	Pack pk; for (int i = 0; i < 170; i++) { Buf b(4800); for (int j = 0; j < 4800; j++) b[j] = float(std::sin(j * (0.1 + i * 0.001)) * std::exp(-j / 800.0)); pk.pcm[0].push_back(b); }
 	for (int i = 0; i < 165; i++) pk.pcm[1].push_back(pk.pcm[0][i]);
