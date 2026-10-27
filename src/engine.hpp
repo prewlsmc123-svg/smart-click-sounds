@@ -192,6 +192,7 @@ public:
 			rel = std::max(rel, s.rel - 8);
 		}
 		s.rel = rel;
+		s.prevDt = dt;
 		s.lastPress = s.pressAt = t;
 		bool soft = up < 0.15 && !scb.empty();
 		Bank& b = soft ? scb : cb;
@@ -218,14 +219,18 @@ public:
 		s.lastRelease = t;
 		if (s.ghost || !playReleases) return std::nullopt;
 		Play p;
-		// a real finger holds at least ~50 ms (measured: 90% of holds > 56 ms), so a
-		// bot's 1-tick tap gets a human release 50-65 ms after the press, unless the
-		// next press comes first
+		// a bot's 1-4 tick tap (< 20 ms) is faster than any finger, so its release
+		// is moved to a fast-but-human 38-50 ms after the press (cancelled if the
+		// next press comes first). Holds of 20 ms+ keep their real timing.
 		double hold = t - s.pressAt;
-		if (hold < 0.05) {
-			double want = std::uniform_real_distribution<double>(0.05, 0.065)(rng);
+		if (hold < 0.02) {
+			double want = std::uniform_real_distribution<double>(0.038, 0.05)(rng);
+			// in fast tapping the next press may come before that: keep the moved
+			// release well clear of it (by the current rhythm), or it lands right
+			// before the next click and the two sound like one double click
+			if (s.prevDt < 0.4) want = std::min(want, std::max(hold, std::min(0.55 * s.prevDt, s.prevDt - 0.035)));
 			p.delay = std::max(0.0, s.pressAt + want - t);
-			hold = want;
+			hold = std::max(hold, want);
 		}
 		p.pressList = s.list;
 		p.pressVariation = s.variation;
@@ -258,7 +263,7 @@ public:
 private:
 	struct PlayerState {
 		bool down = false, ghost = false;
-		double lastPress = -10, lastRelease = -10, pressAt = -10;
+		double lastPress = -10, lastRelease = -10, pressAt = -10, prevDt = 10;
 		float rel = 0, gain = 1, drift = 0, tilt = 0;
 		int list = 0, variation = 0;
 	};

@@ -79,9 +79,9 @@ int main(int argc, char** argv) {
 	std::vector<std::tuple<double, bool, int>> acts;
 	std::ifstream f(argv[2]); std::string line;
 	while (std::getline(f, line)) { double t; int d, q; if (sscanf(line.c_str(), "%lf,%d,%d", &t, &d, &q) == 3) acts.push_back({t, d == 1, q}); }
-	struct V { Buf s; long start; long stop = -1; float g; };
+	struct V { Buf s; long start; long stop = -1; float g; bool moved = false; };
 	std::vector<V> voices; long last[2][2] = {{-1, -1}, {-1, -1}};
-	double end = 0; int presses = 0;
+	double end = 0; int presses = 0, flams = 0;
 	std::map<int, int> varUse;
 	for (auto& [t, down, q] : acts) {
 		end = std::max(end, t);
@@ -91,8 +91,9 @@ int main(int argc, char** argv) {
 		long start = long((t + pl->delay) * kRate);
 		int kind = down ? 0 : 1;
 		if (kind == 0 && last[q][1] >= 0 && voices[last[q][1]].start > start) voices[last[q][1]].s.clear(); // release not started yet
+		if (kind == 0 && last[q][1] >= 0 && voices[last[q][1]].moved && !voices[last[q][1]].s.empty() && start - voices[last[q][1]].start < kRate * 12 / 1000) { flams++; if (getenv("DBG")) std::printf("  flam: press at %.4f, moved release started %.1f ms before\n", t, (start - voices[last[q][1]].start) * 1000.0 / kRate); }
 		if (last[q][kind] >= 0) voices[last[q][kind]].stop = start;
-		voices.push_back({pk.render(e, *pl, strength), start, -1, pl->gain});
+		voices.push_back({pk.render(e, *pl, strength), start, -1, pl->gain, pl->delay > 0});
 		last[q][kind] = long(voices.size()) - 1;
 	}
 	Buf out(size_t((end + 1.5) * kRate));
@@ -114,5 +115,6 @@ int main(int argc, char** argv) {
 	}
 	writeWav(argv[3], out);
 	int reused = 0; for (auto& [k, n] : varUse) if (n > 1) reused++;
-	std::printf("presses %d, different variations %zu (reused %d), length %.1fs\n", presses, varUse.size(), reused, out.size() / double(kRate));
+	std::printf("presses %d, different variations %zu (reused %d), moved release right before a press: %d, length %.1fs\n", presses, varUse.size(), reused, flams, out.size() / double(kRate));
+	return 0;
 }
