@@ -29,6 +29,12 @@ struct Pack {
 
 	// strength: 0 off, 1 natural, 2 more
 	Buf render(Engine& e, Play const& p, int strength) {
+		Buf out = renderBase(e, p, strength);
+		if (p.tiltDB != 0 && !out.empty()) Biquad::lowShelf(2500, -p.tiltDB).run(out); // + = brighter
+		return out;
+	}
+
+	Buf renderBase(Engine& e, Play const& p, int strength) {
 		auto& snd = list(e, p.list);
 		auto& pcmL = pcm[p.list];
 		if (p.base < 0 || p.base >= int(pcmL.size())) return {};

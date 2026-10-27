@@ -101,8 +101,14 @@ int main(int argc, char** argv) {
 			if (v.stop >= 0 && j >= v.stop) { long k = j - v.stop; if (k >= fade) break; g *= float(0.5 * (1 + std::cos(kPi * k / fade))); }
 			out[j] += v.s[i] * g;
 		}
+	// same level relation as in game: clicks at their natural level, room tone at -60 dB RMS
 	float pk2 = 0; for (float v : out) pk2 = std::max(pk2, std::fabs(v));
-	if (pk2 > 0) for (auto& v : out) v *= 0.891f / pk2;
+	float norm = pk2 > 0 ? 0.891f / pk2 : 1.f;
+	for (auto& v : out) v *= norm;
+	if (argc > 6 && std::string(argv[6]) == "room") {
+		Buf room = roomTone(6.f, -60.f);
+		for (size_t i = 0; i < out.size(); i++) out[i] += room[i % room.size()] * norm;
+	}
 	writeWav(argv[3], out);
 	int reused = 0; for (auto& [k, n] : varUse) if (n > 1) reused++;
 	std::printf("presses %d, different variations %zu (reused %d), length %.1fs\n", presses, varUse.size(), reused, out.size() / double(kRate));

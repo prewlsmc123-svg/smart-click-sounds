@@ -123,6 +123,7 @@ struct Play {
 	int pressList = 0;    // for releases: the list/variation of its press (to vary alike)
 	int pressVariation = 0;
 	float gain = 1;       // linear volume multiplier
+	float tiltDB = 0;     // extra brightness: harder presses are brighter
 	double delay = 0;     // seconds to wait before playing
 	bool cutPrevious = true;
 };
@@ -131,7 +132,7 @@ class Engine {
 public:
 	std::vector<Sound> clicks, releases, softClicks, softReleases;
 	float spamMinDB = -8.4f;  // "Like a real hand"
-	float gainVarDB = 1.0f;   // random loudness difference per click
+	float gainVarDB = 2.5f;   // natural loudness spread (std, dB), measured on real clicking
 	int variations = 10000;
 	bool playReleases = true;
 
@@ -172,9 +173,16 @@ public:
 		if (s.ghost) return std::nullopt;
 		double up = t - s.lastRelease;
 		float rel = upTimeDB(up);
+		// Human dynamics: loudness drifts in waves (a real press is ~0.7 correlated
+		// with the previous one) instead of being random per click.
 		if (gainVarDB > 0) {
-			std::normal_distribution<float> nd(0, gainVarDB / 2);
-			rel += std::clamp(nd(rng), -gainVarDB, gainVarDB);
+			float rho = dt < 1.0 ? 0.7f : 0.35f;
+			std::normal_distribution<float> nd(0, gainVarDB);
+			s.drift = rho * s.drift + std::sqrt(1 - rho * rho) * nd(rng);
+			s.drift = std::clamp(s.drift, -2 * gainVarDB, 2 * gainVarDB);
+			rel += s.drift;
+		} else {
+			s.drift = 0;
 		}
 		if (dt < 0.8) { // climb back gradually after quiet clicks
 			float maxRise = float(2 + 8 * dt);
@@ -191,11 +199,13 @@ public:
 		s.list = soft ? 2 : 0;
 		s.variation = id;
 		s.gain = gain;
+		s.tilt = 0.3f * s.drift; // harder presses ring brighter (measured ~0.4 correlation)
 		Play p;
 		p.list = s.list;
 		p.base = id % b.nBase;
 		p.variation = id;
 		p.gain = gain;
+		p.tiltDB = s.tilt;
 		return p;
 	}
 
@@ -209,7 +219,10 @@ public:
 		p.delay = std::max(0.0, s.pressAt + 0.035 - t);
 		p.pressList = s.list;
 		p.pressVariation = s.variation;
-		float adj = std::pow(10.f, holdDB(t - s.pressAt) / 20.f);
+		// a release only loosely follows its press's strength (real: ~0.4 correlation)
+		float relDB = holdDB(t - s.pressAt) - 0.6f * s.drift;
+		if (gainVarDB > 0) relDB += std::normal_distribution<float>(0, gainVarDB * 0.85f)(rng);
+		float adj = std::pow(10.f, std::clamp(relDB, -9.f, 6.f) / 20.f);
 		auto const& presses = s.list == 2 ? softClicks : clicks;
 		int pb = s.variation % int(presses.size());
 		if (presses[pb].partner >= 0) { // the release recorded with this click
@@ -217,6 +230,7 @@ public:
 			p.base = presses[pb].partner;
 			p.variation = s.variation;
 			p.gain = s.gain * adj;
+			p.tiltDB = 0.5f * s.tilt;
 			return p;
 		}
 		bool soft = s.list == 2 && !srb.empty();
@@ -235,7 +249,7 @@ private:
 	struct PlayerState {
 		bool down = false, ghost = false;
 		double lastPress = -10, lastRelease = -10, pressAt = -10;
-		float rel = 0, gain = 1;
+		float rel = 0, gain = 1, drift = 0, tilt = 0;
 		int list = 0, variation = 0;
 	};
 	PlayerState players[2];

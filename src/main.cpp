@@ -29,6 +29,8 @@ static FMOD::ChannelGroup* g_group = nullptr;
 static FMOD::Channel* g_last[2][2] = {};
 struct Live { FMOD::Sound* sound; FMOD::Channel* channel; };
 static std::vector<Live> g_live; // sounds we created; released once they finish
+static FMOD::Sound* g_roomSound = nullptr;
+static FMOD::Channel* g_roomChannel = nullptr;
 
 // ---------- pack loading ----------
 
@@ -155,7 +157,7 @@ static void applySettings() {
 	    {"Same as normal clicks", 0.f}, {"A little quieter", -4.4f}, {"Like a real hand (recommended)", -8.4f}, {"Very quiet", -15.f}};
 	auto s = spam.find(mod->getSettingValue<std::string>("spam"));
 	g_engine.spamMinDB = s == spam.end() ? -8.4f : s->second;
-	g_engine.gainVarDB = strength() == 0 ? 0.f : (strength() == 2 ? 2.f : 1.f);
+	g_engine.gainVarDB = strength() == 0 ? 0.f : (strength() == 2 ? 3.5f : 2.5f);
 	g_engine.playReleases = mod->getSettingValue<bool>("releases");
 }
 
@@ -249,6 +251,37 @@ static void play(int player, int kind, scs::Play const& p) {
 	g_live.push_back({snd, ch});
 }
 
+// ---------- room tone (optional) ----------
+
+static void stopRoomTone() {
+	if (g_roomChannel) g_roomChannel->stop();
+	g_roomChannel = nullptr;
+}
+
+static void startRoomTone() {
+	stopRoomTone();
+	auto mod = Mod::get();
+	if (!mod->getSettingValue<bool>("enabled") || !mod->getSettingValue<bool>("room-tone")) return;
+	auto sys = FMODAudioEngine::sharedEngine()->m_system;
+	if (!g_group) sys->createChannelGroup("SmartClickSounds", &g_group);
+	if (!g_roomSound) {
+		scs::Buf x = scs::roomTone(6.f, -60.f);
+		FMOD_CREATESOUNDEXINFO ex{};
+		ex.cbsize = sizeof(ex);
+		ex.length = unsigned(x.size() * sizeof(float));
+		ex.numchannels = 1;
+		ex.defaultfrequency = scs::kRate;
+		ex.format = FMOD_SOUND_FORMAT_PCMFLOAT;
+		if (sys->createSound(reinterpret_cast<const char*>(x.data()), FMOD_OPENMEMORY | FMOD_OPENRAW | FMOD_CREATESAMPLE | FMOD_LOOP_NORMAL, &ex, &g_roomSound) != FMOD_OK)
+			g_roomSound = nullptr;
+	}
+	if (!g_roomSound) return;
+	if (sys->playSound(g_roomSound, g_group, true, &g_roomChannel) != FMOD_OK || !g_roomChannel) { g_roomChannel = nullptr; return; }
+	float vol = float(mod->getSettingValue<int64_t>("volume")) / 100.f;
+	g_roomChannel->setVolume(vol);
+	g_roomChannel->setPaused(false);
+}
+
 static void onInput(PlayerObject* obj, PlayerButton button, bool down) {
 	auto mod = Mod::get();
 	if (!mod->getSettingValue<bool>("enabled")) return;
@@ -293,7 +326,12 @@ class $modify(SCSPlayLayer, PlayLayer) {
 		if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
 		ensureLoaded(); // load the pack before the first click, not during it
 		g_engine.resetAll();
+		startRoomTone();
 		return true;
+	}
+	void onQuit() {
+		stopRoomTone();
+		PlayLayer::onQuit();
 	}
 	void resetLevel() {
 		PlayLayer::resetLevel();

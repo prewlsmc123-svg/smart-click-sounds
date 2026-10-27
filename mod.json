@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.1.0",
+	"version": "v1.2.0",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -53,6 +53,12 @@
 			"description": "Removes the desk 'boom' so clicks sound crisp instead of clunky.",
 			"type": "bool",
 			"default": true
+		},
+		"room-tone": {
+			"name": "Room tone (for showcase recordings)",
+			"description": "Adds the faint background hiss of a real room under the clicks while you're in a level, like a real mic recording (never total silence between clicks).",
+			"type": "bool",
+			"default": false
 		},
 		"releases": {
 			"name": "Release sounds",

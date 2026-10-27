@@ -119,7 +119,7 @@ inline VariantParams variantParams(int k, int nBase, std::vector<float> const& b
 		p.donor = d[std::uniform_int_distribution<int>(0, int(std::min<size_t>(10, d.size())) - 1)(rng)].second;
 		p.weight = U(0.10f, 0.35f);
 	}
-	p.pitch = 1 + U(-0.02f, 0.02f) * s;
+	p.pitch = 1 + U(-0.008f, 0.008f) * s; // a mouse switch barely changes pitch
 	p.tiltDB = U(-1.2f, 1.2f) * s;
 	p.attack = U(-0.12f, 0.12f) * s;
 	p.damp = U(0.f, 5.f) * s;
@@ -152,6 +152,36 @@ inline Buf applyVariant(Buf const& base, Buf const* donor, VariantParams const& 
 	size_t f = std::min<size_t>(480, x.size() / 4);
 	for (size_t i = 0; i < f; i++)
 		x[x.size() - f + i] *= float(0.5 * (1 + std::cos(kPi * (i + 1) / f)));
+	return x;
+}
+
+// A few seconds of quiet "room tone" (soft, warm hiss like a real recording's
+// background), seamlessly loopable. rmsDB sets its level.
+inline Buf roomTone(float seconds, float rmsDB, uint32_t seed = 7) {
+	size_t n = size_t(seconds * kRate), xf = kRate / 2;
+	std::mt19937 rng(seed);
+	std::normal_distribution<float> nd(0, 1);
+	Buf x(n + xf);
+	double b0 = 0, b1 = 0, b2 = 0; // pink-ish noise (Paul Kellet's economy filter)
+	for (auto& v : x) {
+		double w = nd(rng);
+		b0 = 0.99765 * b0 + w * 0.0990460;
+		b1 = 0.96300 * b1 + w * 0.2965164;
+		b2 = 0.57000 * b2 + w * 1.0526913;
+		v = float(b0 + b1 + b2 + w * 0.1848);
+	}
+	Biquad::highpass(90).run(x);
+	Biquad::lowShelf(6000, 3).run(x);          // lift everything below 6 kHz = gentle top roll-off
+	Biquad::peak(9000, -6, 0.7).run(x);
+	for (size_t i = 0; i < xf; i++) {          // crossfade the end into the start: seamless loop
+		float f = float(i) / xf;
+		x[i] = x[i] * f + x[n + i] * (1 - f);
+	}
+	x.resize(n);
+	double s = 0;
+	for (float v : x) s += double(v) * v;
+	float g = float(std::pow(10, rmsDB / 20) / std::sqrt(s / n + 1e-20));
+	for (auto& v : x) v *= g;
 	return x;
 }
 
