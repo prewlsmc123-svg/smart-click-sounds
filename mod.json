@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.4.0",
+	"version": "v1.5.0",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -18,6 +18,12 @@
 		]
 	},
 	"settings": {
+		"menu-keybind": {
+			"name": "Open this menu",
+			"description": "Key that opens Smart Click Sounds' settings from anywhere in the game.",
+			"type": "keybind",
+			"default": "F6"
+		},
 		"enabled": {
 			"name": "Enabled",
 			"type": "bool",

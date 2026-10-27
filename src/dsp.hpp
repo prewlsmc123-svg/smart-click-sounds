@@ -97,6 +97,29 @@ inline Buf alignMix(Buf const& a, Buf const& b, float w) {
 	return y;
 }
 
+// How many separate hits a sound has (sharp high-frequency attacks within 14 dB
+// of its loudest one). A clean click has 1; 2+ sounds like overlapping clicks.
+inline int countHits(Buf const& in) {
+	Buf d = in;
+	Biquad::highpass(4000).run(d);
+	const size_t hop = kRate / 1000;
+	std::vector<float> e;
+	for (size_t i = 0; i + hop <= d.size(); i += hop) {
+		double s = 0;
+		for (size_t j = i; j < i + hop; j++) s += double(d[j]) * d[j];
+		e.push_back(float(10 * std::log10(s / hop + 1e-18)));
+	}
+	if (e.empty()) return 0;
+	float pk = *std::max_element(e.begin(), e.end()), fol = e[0];
+	int hits = 0, last = -99;
+	for (int i = 1; i < int(e.size()); i++) {
+		float prev = fol;
+		fol = std::max(e[i], fol - 0.8f);
+		if (e[i] > pk - 14 && e[i] - prev >= 8 && i - last >= 4) { hits++; last = i; }
+	}
+	return hits;
+}
+
 struct VariantParams {
 	int donor = -1;
 	float weight = 0, pitch = 1, tiltDB = 0, attack = 0, damp = 0;
@@ -109,16 +132,7 @@ inline VariantParams variantParams(int k, int nBase, std::vector<float> const& b
 	std::mt19937 rng(uint32_t(k) * 2654435761u + 17);
 	auto U = [&](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
 	float s = strength >= 2 ? 1.6f : 1.f;
-	int base = k % nBase;
-	// donor: one of the 10 recordings closest in loudness
-	std::vector<std::pair<float, int>> d;
-	for (int i = 0; i < nBase; i++)
-		if (i != base) d.push_back({std::fabs(baseLoud[i] - baseLoud[base]), i});
-	std::partial_sort(d.begin(), d.begin() + std::min<size_t>(10, d.size()), d.end());
-	if (!d.empty()) {
-		p.donor = d[std::uniform_int_distribution<int>(0, int(std::min<size_t>(10, d.size())) - 1)(rng)].second;
-		p.weight = U(0.10f, 0.35f);
-	}
+	(void)baseLoud; // variations no longer blend recordings (that sounded like overlapping clicks)
 	p.pitch = 1 + U(-0.008f, 0.008f) * s; // a mouse switch barely changes pitch
 	p.tiltDB = U(-1.2f, 1.2f) * s;
 	p.attack = U(-0.12f, 0.12f) * s;

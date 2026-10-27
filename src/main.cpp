@@ -9,6 +9,7 @@
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/ui/GeodeUI.hpp>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -121,6 +122,7 @@ static void loadDir(fs::path const& dir, std::string const& prefix, int list, st
 	for (auto& f : files) {
 		scs::Buf x = readWav(f);
 		if (x.size() < 100) continue;
+		if (scs::countHits(x) > 1) continue; // sounds like overlapping clicks: skip
 		if (clean) scs::cleanTone(x);
 		out.push_back({nullptr, scs::loudnessDB(x.data(), x.size(), scs::kRate), -1});
 		g_pack.pcm[list].push_back(std::move(x));
@@ -394,3 +396,10 @@ class $modify(SCSMenuLayer, MenuLayer) {
 		return true;
 	}
 };
+
+// F6 (rebindable in the mod's settings) opens this mod's settings menu anywhere
+$on_mod(Loaded) {
+	listenForKeybindSettingPresses("menu-keybind", [](Keybind const&, bool down, bool repeat, double) {
+		if (down && !repeat) openSettingsPopup(Mod::get());
+	});
+}

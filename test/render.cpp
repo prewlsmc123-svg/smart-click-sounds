@@ -50,6 +50,7 @@ static void loadList(fs::path dir, std::vector<Sound>& out, std::vector<Buf>& pc
 	for (auto& f : files) {
 		Buf x = readWav(f);
 		if (x.empty()) continue;
+		if (countHits(x) > 1) continue;
 		cleanTone(x);
 		out.push_back({nullptr, loudnessDB(x.data(), x.size(), kRate), -1});
 		pcm.push_back(std::move(x));
