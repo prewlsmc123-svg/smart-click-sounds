@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.5.0",
+	"version": "v1.6.0",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -53,7 +53,7 @@
 		},
 		"variation": {
 			"name": "Variation",
-			"description": "How different each variation is: blends of similar recorded clicks plus small pitch, tone, hit and ring changes.",
+			"description": "How different each variation is: small pitch, tone, hit and ring changes to the recorded clicks.",
 			"type": "string",
 			"default": "Natural (recommended)",
 			"one-of": [
@@ -64,13 +64,11 @@
 		},
 		"sounds": {
 			"name": "Sounds",
-			"description": "Which recorded clicks to use. 'Both' mixes the reference clicks with the ones you recorded (they sound alike after Clean tone).",
+			"description": "Which clicks to use: the built-in click pack, or a pack you made with the GDClickbot app.",
 			"type": "string",
-			"default": "Both (recommended)",
+			"default": "Built-in clicks (recommended)",
 			"one-of": [
-				"Both (recommended)",
-				"Reference clicks only",
-				"My recorded clicks only",
+				"Built-in clicks (recommended)",
 				"My GDClickbot app pack"
 			]
 		},
