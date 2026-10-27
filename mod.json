@@ -64,11 +64,13 @@
 		},
 		"sounds": {
 			"name": "Sounds",
-			"description": "Which clicks to use: the built-in click pack, or a pack you made with the GDClickbot app.",
+			"description": "Which recorded clicks to use. 'Both' mixes the reference clicks with the ones you recorded (they sound alike after Clean tone).",
 			"type": "string",
-			"default": "Built-in clicks (recommended)",
+			"default": "Both (recommended)",
 			"one-of": [
-				"Built-in clicks (recommended)",
+				"Both (recommended)",
+				"Reference clicks only",
+				"My recorded clicks only",
 				"My GDClickbot app pack"
 			]
 		},

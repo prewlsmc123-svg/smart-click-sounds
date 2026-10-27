@@ -140,14 +140,16 @@ static void pairUp(std::vector<scs::Sound>& presses, std::vector<std::string> co
 }
 
 // sound sets bundled with the mod; a custom folder setting overrides them
-enum class SoundSet { Reference, AppPack, Custom };
+enum class SoundSet { Both, Reference, Mine, AppPack, Custom };
 
 static SoundSet soundSet() {
 	auto mod = Mod::get();
 	if (!mod->getSettingValue<std::string>("pack-folder").empty()) return SoundSet::Custom;
 	auto v = mod->getSettingValue<std::string>("sounds");
+	if (v == "Reference clicks only") return SoundSet::Reference;
+	if (v == "My recorded clicks only") return SoundSet::Mine;
 	if (v == "My GDClickbot app pack") return SoundSet::AppPack;
-	return SoundSet::Reference;
+	return SoundSet::Both;
 }
 
 static void loadFolder(fs::path const& folder, bool clean, std::vector<std::string> (&nums)[4], std::string const& tag) {
@@ -194,9 +196,15 @@ static void ensureLoaded() {
 	applySettings();
 	std::vector<std::string> nums[4];
 	auto res = mod->getResourcesDir();
-	if (set == SoundSet::Reference) {
+	if (set == SoundSet::Both || set == SoundSet::Reference) {
 		loadDir(res, "scs_click_", 0, nums[0], clean, "ref");
 		loadDir(res, "scs_release_", 1, nums[1], clean, "ref");
+	}
+	if (set == SoundSet::Both || set == SoundSet::Mine) {
+		loadDir(res, "scs_mine_click_", 0, nums[0], clean, "mine");
+		loadDir(res, "scs_mine_release_", 1, nums[1], clean, "mine");
+		loadDir(res, "scs_mine_softclick_", 2, nums[2], clean, "mine");
+		loadDir(res, "scs_mine_softrelease_", 3, nums[3], clean, "mine");
 	}
 	if (set == SoundSet::AppPack) loadFolder(documentsPack(), clean, nums, "app");
 	if (set == SoundSet::Custom) loadFolder(fs::path(mod->getSettingValue<std::string>("pack-folder")), clean, nums, "custom");
