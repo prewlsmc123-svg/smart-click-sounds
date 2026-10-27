@@ -1,0 +1,61 @@
+{
+	"geode": "5.10.1",
+	"gd": {
+		"win": "2.2081"
+	},
+	"version": "v1.0.0",
+	"id": "jav.smart-click-sounds",
+	"name": "Smart Click Sounds",
+	"developer": "jav",
+	"description": "Realistic click sounds that react to how you click: lighter spam, matched releases, no repeats.",
+	"tags": ["gameplay", "customization"],
+	"resources": {
+		"files": ["resources/pack/*.wav"]
+	},
+	"settings": {
+		"enabled": {
+			"name": "Enabled",
+			"type": "bool",
+			"default": true
+		},
+		"volume": {
+			"name": "Volume (%)",
+			"type": "int",
+			"default": 100,
+			"min": 0,
+			"max": 200,
+			"control": { "slider": true }
+		},
+		"spam": {
+			"name": "Spam / fast clicks",
+			"description": "How much lighter fast clicks sound. Clicks 150 ms+ apart are always full strength.",
+			"type": "string",
+			"default": "Like a real hand (recommended)",
+			"one-of": ["Same as normal clicks", "A little quieter", "Like a real hand (recommended)", "Very quiet"]
+		},
+		"variation": {
+			"name": "Variation",
+			"description": "Tiny pitch and volume differences on every click, on top of using a different recorded sound each time.",
+			"type": "string",
+			"default": "Natural (recommended)",
+			"one-of": ["Off", "Natural (recommended)", "More"]
+		},
+		"releases": {
+			"name": "Release sounds",
+			"type": "bool",
+			"default": true
+		},
+		"only-jump": {
+			"name": "Only jump inputs",
+			"description": "Ignore platformer left/right movement.",
+			"type": "bool",
+			"default": true
+		},
+		"pack-folder": {
+			"name": "Click pack folder",
+			"description": "Leave empty to use your GDClickbot pack (Documents\\GDClickbot\\clickpack) if it exists, otherwise the pack built into this mod. Or paste any clickpack folder (with player1\\clicks, or clicks + releases folders).",
+			"type": "string",
+			"default": ""
+		}
+	}
+}

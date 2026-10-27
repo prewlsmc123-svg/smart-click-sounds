@@ -1,0 +1,43 @@
+name: Build Geode Mod
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+
+jobs:
+  build:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the mod
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          combine: true
+          target: Win64
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    needs: ['build']
+    steps:
+      - uses: geode-sdk/build-geode-mod/combine@main
+        id: build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Smart Click Sounds
+          path: ${{ steps.build.outputs.build-output }}
+
+      - name: Publish as a release (easy download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Smart Click Sounds (build ${{ github.run_number }})
+          files: ${{ steps.build.outputs.build-output }}/*.geode
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write

@@ -1,0 +1,265 @@
+// Smart Click Sounds: plays real click sounds in-game on every jump press and
+// release, using the smart engine in engine.hpp (spam-aware loudness, matched
+// press/release pairs, no repeats, live variation). Because the game itself plays
+// the sounds, they're always in sync with whatever drives the inputs: you,
+// a macro, practice mode, speedhack.
+
+#include <Geode/Geode.hpp>
+#include <Geode/modify/PlayerObject.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <filesystem>
+#include <cctype>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include "engine.hpp"
+
+#ifdef GEODE_IS_WINDOWS
+#include <ShlObj.h>
+#endif
+
+using namespace geode::prelude;
+namespace fs = std::filesystem;
+
+static scs::Engine g_engine;
+static std::vector<FMOD::Sound*> g_sounds;
+static std::string g_loadedFrom = "\x01";
+static FMOD::ChannelGroup* g_group = nullptr;
+static FMOD::Channel* g_last[2][2] = {};
+
+// ---------- pack loading ----------
+
+static fs::path documentsPack() {
+#ifdef GEODE_IS_WINDOWS
+	PWSTR p = nullptr;
+	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &p))) {
+		fs::path d(p);
+		CoTaskMemFree(p);
+		return d / "GDClickbot" / "clickpack";
+	}
+#endif
+	return {};
+}
+
+// loudness of a 16-bit / 24-bit / float WAV (mixed to mono)
+static float wavLoudness(fs::path const& path) {
+	std::ifstream f(path, std::ios::binary);
+	std::vector<char> d((std::istreambuf_iterator<char>(f)), {});
+	if (d.size() < 44 || std::string(d.data(), 4) != "RIFF") return -100.f;
+	auto u16 = [&](size_t o) { return uint16_t(uint8_t(d[o]) | uint8_t(d[o + 1]) << 8); };
+	auto u32 = [&](size_t o) { return uint32_t(u16(o) | uint32_t(u16(o + 2)) << 16); };
+	size_t pos = 12;
+	int fmt = 0, ch = 1, bits = 16, rate = 48000;
+	size_t dataOff = 0, dataLen = 0;
+	while (pos + 8 <= d.size()) {
+		std::string id(d.data() + pos, 4);
+		size_t sz = u32(pos + 4), body = pos + 8;
+		if (id == "fmt " && body + 16 <= d.size()) {
+			fmt = u16(body); ch = std::max<int>(1, u16(body + 2)); rate = u32(body + 4); bits = u16(body + 14);
+			if (fmt == 0xFFFE && body + 26 <= d.size()) fmt = u16(body + 24);
+		} else if (id == "data") {
+			dataOff = body; dataLen = std::min(sz, d.size() - body);
+		}
+		pos = body + sz + (sz & 1);
+	}
+	int bps = bits / 8;
+	if (!dataOff || bps == 0) return -100.f;
+	size_t n = dataLen / (bps * ch);
+	std::vector<float> x(n);
+	for (size_t i = 0; i < n; i++) {
+		float s = 0;
+		for (int c = 0; c < ch; c++) {
+			const char* p = d.data() + dataOff + (i * ch + c) * bps;
+			if (fmt == 1 && bits == 16) s += int16_t(uint8_t(p[0]) | uint8_t(p[1]) << 8) / 32768.f;
+			else if (fmt == 1 && bits == 24) s += (int32_t((uint8_t(p[0]) << 8) | (uint8_t(p[1]) << 16) | (uint8_t(p[2]) << 24)) >> 8) / 8388608.f;
+			else if (fmt == 3 && bits == 32) { float v; std::memcpy(&v, p, 4); s += v; }
+		}
+		x[i] = s / ch;
+	}
+	return scs::loudnessDB(x.data(), x.size(), rate);
+}
+
+static std::string trailingNumber(std::string name) {
+	auto dot = name.rfind('.');
+	if (dot != std::string::npos) name = name.substr(0, dot);
+	size_t i = name.size();
+	while (i > 0 && std::isdigit(uint8_t(name[i - 1]))) i--;
+	return name.substr(i);
+}
+
+// loads every .wav/.ogg/.mp3 in dir whose name starts with prefix (any prefix if empty)
+static void loadDir(fs::path const& dir, std::string const& prefix, std::vector<scs::Sound>& out, std::vector<std::string>& nums) {
+	std::error_code ec;
+	if (!fs::is_directory(dir, ec)) return;
+	std::vector<fs::path> files;
+	for (auto& e : fs::directory_iterator(dir, ec)) {
+		if (!e.is_regular_file()) continue;
+		auto ext = e.path().extension().string();
+		for (auto& c : ext) c = char(std::tolower(uint8_t(c)));
+		auto name = e.path().filename().string();
+		if ((ext == ".wav" || ext == ".ogg" || ext == ".mp3") && (prefix.empty() || name.rfind(prefix, 0) == 0))
+			files.push_back(e.path());
+	}
+	std::sort(files.begin(), files.end());
+	auto sys = FMODAudioEngine::sharedEngine()->m_system;
+	for (auto& f : files) {
+		FMOD::Sound* snd = nullptr;
+		if (sys->createSound(f.string().c_str(), FMOD_DEFAULT | FMOD_CREATESAMPLE, nullptr, &snd) != FMOD_OK || !snd) continue;
+		snd->setMode(FMOD_LOOP_OFF);
+		g_sounds.push_back(snd);
+		float loud = f.extension() == ".wav" ? wavLoudness(f) : -20.f;
+		out.push_back({snd, loud, -1});
+		nums.push_back(trailingNumber(f.filename().string()));
+	}
+}
+
+// press i and release j belong together when their file numbers match
+static void pairUp(std::vector<scs::Sound>& presses, std::vector<std::string> const& pn,
+                   std::vector<scs::Sound> const& rels, std::vector<std::string> const& rn) {
+	std::map<std::string, int> byNum;
+	for (int i = 0; i < int(rn.size()); i++) if (!rn[i].empty()) byNum[rn[i]] = i;
+	for (int i = 0; i < int(presses.size()); i++) {
+		auto it = byNum.find(pn[i]);
+		presses[i].partner = it == byNum.end() ? -1 : it->second;
+	}
+}
+
+static fs::path resolvePackFolder() {
+	auto custom = Mod::get()->getSettingValue<std::string>("pack-folder");
+	std::error_code ec;
+	if (!custom.empty()) return fs::path(custom);
+	auto docs = documentsPack();
+	if (!docs.empty() && fs::is_directory(docs / "player1" / "clicks", ec) && !fs::is_empty(docs / "player1" / "clicks", ec))
+		return docs;
+	return Mod::get()->getResourcesDir(); // the pack bundled with the mod
+}
+
+static void applySettings() {
+	auto mod = Mod::get();
+	static const std::map<std::string, float> spam = {
+	    {"Same as normal clicks", 1.f}, {"A little quieter", 0.6f}, {"Like a real hand (recommended)", 0.38f}, {"Very quiet", 0.18f}};
+	static const std::map<std::string, int> var = {{"Off", 0}, {"Natural (recommended)", 1}, {"More", 2}};
+	auto s = spam.find(mod->getSettingValue<std::string>("spam"));
+	g_engine.spamMinGain = s == spam.end() ? 0.38f : s->second;
+	auto v = var.find(mod->getSettingValue<std::string>("variation"));
+	g_engine.variation = v == var.end() ? 1 : v->second;
+	g_engine.playReleases = mod->getSettingValue<bool>("releases");
+}
+
+static void ensureLoaded() {
+	applySettings();
+	auto folder = resolvePackFolder();
+	if (folder.string() == g_loadedFrom) return;
+	for (auto s : g_sounds) s->release();
+	g_sounds.clear();
+	g_engine = scs::Engine{};
+	applySettings();
+	std::vector<std::string> cn, rn, scn, srn;
+	std::error_code ec;
+	if (fs::is_directory(folder / "player1" / "clicks", ec)) { // clickpack layout
+		auto p = folder / "player1";
+		loadDir(p / "clicks", "", g_engine.clicks, cn);
+		loadDir(p / "releases", "", g_engine.releases, rn);
+		loadDir(p / "softclicks", "", g_engine.softClicks, scn);
+		loadDir(p / "softreleases", "", g_engine.softReleases, srn);
+	} else if (fs::is_directory(folder / "clicks", ec)) { // plain clicks/releases folders
+		loadDir(folder / "clicks", "", g_engine.clicks, cn);
+		loadDir(folder / "releases", "", g_engine.releases, rn);
+	} else { // bundled pack: flat files
+		loadDir(folder, "scs_click_", g_engine.clicks, cn);
+		loadDir(folder, "scs_release_", g_engine.releases, rn);
+	}
+	pairUp(g_engine.clicks, cn, g_engine.releases, rn);
+	pairUp(g_engine.softClicks, scn, g_engine.softReleases, srn);
+	g_engine.load();
+	g_loadedFrom = folder.string();
+	log::info("Smart Click Sounds: {} clicks, {} releases, {} light clicks from {}",
+	          g_engine.clicks.size(), g_engine.releases.size(), g_engine.softClicks.size(), g_loadedFrom);
+}
+
+// ---------- playback ----------
+
+static void play(int player, int kind, scs::Play const& p) {
+	auto sys = FMODAudioEngine::sharedEngine()->m_system;
+	if (!g_group) sys->createChannelGroup("SmartClickSounds", &g_group);
+	int rate = 48000;
+	sys->getSoftwareFormat(&rate, nullptr, nullptr);
+	// fade out the previous sound of the same kind over 40 ms so tails don't pile up
+	if (p.cutPrevious) {
+		if (auto prev = g_last[player][kind]) {
+			bool playing = false;
+			unsigned long long parent = 0;
+			if (prev->isPlaying(&playing) == FMOD_OK && playing && prev->getDSPClock(nullptr, &parent) == FMOD_OK) {
+				unsigned long long fade = (unsigned long long)rate * 40 / 1000;
+				if (p.delay > 0) parent += (unsigned long long)(p.delay * rate);
+				prev->addFadePoint(parent, 1.f);
+				prev->addFadePoint(parent + fade, 0.f);
+				prev->setDelay(0, parent + fade, true);
+			}
+		}
+	}
+	FMOD::Channel* ch = nullptr;
+	if (sys->playSound(static_cast<FMOD::Sound*>(p.sound), g_group, true, &ch) != FMOD_OK || !ch) return;
+	float vol = float(Mod::get()->getSettingValue<int64_t>("volume")) / 100.f;
+	ch->setVolume(p.gain * vol);
+	ch->setPitch(p.pitch);
+	if (p.delay > 0) {
+		unsigned long long parent = 0;
+		if (ch->getDSPClock(nullptr, &parent) == FMOD_OK)
+			ch->setDelay(parent + (unsigned long long)(p.delay * rate), 0, false);
+	}
+	ch->setPaused(false);
+	g_last[player][kind] = ch;
+}
+
+static void onInput(PlayerObject* obj, PlayerButton button, bool down) {
+	auto mod = Mod::get();
+	if (!mod->getSettingValue<bool>("enabled")) return;
+	if (mod->getSettingValue<bool>("only-jump") && button != PlayerButton::Jump) return;
+	auto gl = GJBaseGameLayer::get();
+	if (!gl) return;
+	GJGameLevel* level = nullptr;
+	if (auto pl = PlayLayer::get()) {
+		if (pl->m_isPaused) return;
+		level = pl->m_level;
+	} else if (auto el = LevelEditorLayer::get()) {
+		level = el->m_level;
+	} else {
+		return;
+	}
+	int player;
+	if (obj == gl->m_player1) player = 0;
+	else if (obj == gl->m_player2 && level && level->m_twoPlayerMode) player = 1;
+	else return; // in dual mode one click moves both players: play it once
+	ensureLoaded();
+	if (!g_engine.ready()) return;
+	double t = gl->m_gameState.m_levelTime; // game time: unaffected by speedhack
+	auto p = down ? g_engine.press(player, t) : g_engine.release(player, t);
+	if (p && p->sound) play(player, down ? 0 : 1, *p);
+}
+
+class $modify(SCSPlayer, PlayerObject) {
+	bool pushButton(PlayerButton button) {
+		bool ret = PlayerObject::pushButton(button);
+		onInput(this, button, true);
+		return ret;
+	}
+	bool releaseButton(PlayerButton button) {
+		bool ret = PlayerObject::releaseButton(button);
+		onInput(this, button, false);
+		return ret;
+	}
+};
+
+class $modify(SCSPlayLayer, PlayLayer) {
+	bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+		if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+		ensureLoaded(); // load the pack before the first click, not during it
+		g_engine.resetAll();
+		return true;
+	}
+	void resetLevel() {
+		PlayLayer::resetLevel();
+		g_engine.resetAll();
+	}
+};
