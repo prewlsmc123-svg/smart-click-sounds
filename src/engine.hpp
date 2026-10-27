@@ -1,23 +1,25 @@
 #pragma once
-// Smart Click Sounds engine: decides which sound to play for each press and
-// release, and how loud, from game-time input timing. Plain C++ (no Geode), so
-// it can be unit tested on its own.
+// Smart Click Sounds engine: decides which click variation to play for each
+// press and release, and how loud, from game-time input timing. Plain C++.
 //
-// What it does (same rules as the GDClickbot app):
-//  * Each press gets a target loudness: full strength for normal clicks, lighter
-//    the faster you spam (a curve matched to a real human spam recording).
-//  * Loudness never jumps up suddenly after quiet clicks; it climbs back gradually.
-//  * The pack sound whose natural loudness is closest is used (light taps are
-//    real light taps, not loud clicks turned down), and every sound is used once
-//    before any repeats; never one of the last 32 again.
-//  * Real fast/spam clicks ("softclicks") are used for spam when the pack has them.
-//  * Each press plays with its own release (recorded together), same pitch/volume.
-//  * A release can't physically come < 35 ms after its press: it's delayed.
-//  * A second press < 25 ms after the previous one (input buffering) is silent.
+// Rules (from ZCB3's click-type logic and measurements of real clicking):
+//  * A press's strength depends on how long the finger was UP (time since the
+//    last release): 150 ms+ = full; spam (< 150 ms) gets lighter down to the
+//    "spam" setting at ~40 ms; "micro" re-presses (< 25 ms up) are lighter still.
+//  * A release depends on how long it was HELD: quick taps let go snappier
+//    (+2 dB), long holds softer (-2 dB). It always plays the release recorded
+//    with that press's click, varied the same way.
+//  * Loudness never jumps up suddenly after quiet clicks; it climbs back.
+//  * Picks among N variations (default 10,000) of the recorded clicks, the one
+//    whose loudness fits; every variation is used once before any repeats, and
+//    the same recorded click is never the source twice within 8 clicks.
+//  * A second press < 25 ms after the previous press (input buffering) is silent.
+//  * Releases can't come < 35 ms after their press (a finger can't): delayed.
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <random>
 #include <vector>
@@ -25,12 +27,12 @@
 namespace scs {
 
 struct Sound {
-	void* handle = nullptr; // FMOD::Sound* in the mod
+	void* handle = nullptr; // optional user data (e.g. decoded audio)
 	float loud = -100.f;    // dB, loudest 10 ms of the first 40 ms
 	int partner = -1;       // index of its release in the matching release list
 };
 
-// loudness of mono float samples (same measure as the app)
+// loudness of mono float samples (same measure as the GDClickbot app)
 inline float loudnessDB(const float* x, size_t n, int rate) {
 	size_t w = rate / 100, len = std::min(n, size_t(rate) * 4 / 100);
 	if (len == 0) return -100.f;
@@ -46,110 +48,118 @@ inline float loudnessDB(const float* x, size_t n, int rate) {
 	return r < 1e-9 ? -100.f : float(20 * std::log10(r));
 }
 
+// A bank of N variations of nBase recorded sounds (variation k comes from
+// recording k % nBase), sorted by loudness.
 class Bank {
 public:
-	std::vector<int> idx;      // sound indices sorted by loudness
+	int nBase = 0;
+	std::vector<int> ids;      // variation ids sorted by loudness
 	std::vector<float> loud;   // ascending
 	std::vector<bool> used;
-	std::vector<int> recent;
+	std::deque<int> recentIds, recentBase;
 	int nUsed = 0;
 	float ref = -20.f;         // a typical firm click (70th percentile)
 
-	void build(const std::vector<Sound>& sounds) {
-		idx.clear(); loud.clear(); recent.clear(); nUsed = 0;
-		for (int i = 0; i < int(sounds.size()); i++) idx.push_back(i);
-		std::sort(idx.begin(), idx.end(), [&](int a, int b) { return sounds[a].loud < sounds[b].loud; });
-		for (int i : idx) loud.push_back(sounds[i].loud);
-		used.assign(idx.size(), false);
-		if (!loud.empty()) ref = loud[loud.size() * 7 / 10];
+	void build(std::vector<Sound> const& base, int variations) {
+		nBase = int(base.size());
+		ids.clear(); loud.clear(); recentIds.clear(); recentBase.clear(); nUsed = 0;
+		if (!nBase) return;
+		int n = std::max(variations, nBase);
+		for (int k = 0; k < n; k++) ids.push_back(k);
+		std::stable_sort(ids.begin(), ids.end(), [&](int a, int b) { return base[a % nBase].loud < base[b % nBase].loud; });
+		for (int k : ids) loud.push_back(base[k % nBase].loud);
+		used.assign(n, false);
+		std::vector<float> L;
+		for (auto& s : base) L.push_back(s.loud);
+		std::sort(L.begin(), L.end());
+		ref = L[L.size() * 7 / 10];
 	}
-	bool empty() const { return idx.empty(); }
+	bool empty() const { return ids.empty(); }
 
-	// returns the sound index (into the original list) and its loudness
+	// returns a variation id whose loudness is close to target
 	int pick(float target, std::mt19937& rng, float& outLoud) {
-		int n = int(idx.size());
-		size_t keep = std::min<size_t>(32, n / 2);
-		if (nUsed >= n) { // pack used up: start over, keeping the most recent off-limits
+		int n = int(ids.size());
+		if (nUsed >= n) { // all used: start over (recent ones stay off-limits below)
 			std::fill(used.begin(), used.end(), false);
 			nUsed = 0;
-			for (int r : recent) if (!used[r]) { used[r] = true; nUsed++; }
-			if (nUsed >= n) { std::fill(used.begin(), used.end(), false); nUsed = 0; }
 		}
+		auto baseRecent = [&](int id) {
+			return std::find(recentBase.begin(), recentBase.end(), id % nBase) != recentBase.end();
+		};
+		auto idRecent = [&](int id) { return std::find(recentIds.begin(), recentIds.end(), id) != recentIds.end(); };
 		int pos = int(std::lower_bound(loud.begin(), loud.end(), target) - loud.begin());
-		std::vector<int> cand;
-		int lo = pos - 1, hi = pos;
-		while (cand.size() < 4 && (lo >= 0 || hi < n)) {
-			bool useHi = hi < n && (lo < 0 || loud[hi] - target <= target - loud[lo]);
-			if (useHi) { if (!used[hi]) cand.push_back(hi); hi++; }
-			else { if (!used[lo]) cand.push_back(lo); lo--; }
-		}
-		int k = cand[std::uniform_int_distribution<int>(0, int(cand.size()) - 1)(rng)];
-		// unused sounds near this loudness all gone: reuse a close one that
-		// hasn't played recently rather than a far-off (wrong-sounding) one
-		if (std::fabs(loud[k] - target) > 8) {
-			int best = -1;
-			float bd = std::fabs(loud[k] - target) - 2;
-			for (int j = 0; j < n; j++) {
-				if (std::find(recent.begin(), recent.end(), j) != recent.end()) continue;
-				float d = std::fabs(loud[j] - target);
-				if (d < bd) { best = j; bd = d; }
-			}
-			if (best >= 0) {
-				remember(best, keep);
-				outLoud = loud[best];
-				return idx[best];
+		std::vector<int> cand, candBases;
+		for (int pass = 0; pass < 2 && cand.empty(); pass++) {
+			int lo = pos - 1, hi = pos;
+			while (cand.size() < 4 && (lo >= 0 || hi < n)) {
+				bool useHi = hi < n && (lo < 0 || loud[hi] - target <= target - loud[lo]);
+				int j = useHi ? hi++ : lo--;
+				if (std::fabs(loud[j] - target) > 8 && !cand.empty()) break;
+				int id = ids[j];
+				if (idRecent(id)) continue;
+				if (pass == 0 && (used[j] || baseRecent(id))) continue;
+				if (std::find(candBases.begin(), candBases.end(), id % nBase) != candBases.end()) continue;
+				cand.push_back(j);
+				candBases.push_back(id % nBase);
 			}
 		}
-		used[k] = true;
-		nUsed++;
-		remember(k, keep);
-		outLoud = loud[k];
-		return idx[k];
-	}
-
-private:
-	void remember(int k, size_t keep) {
-		recent.push_back(k);
-		if (recent.size() > keep) recent.erase(recent.begin(), recent.end() - keep);
+		if (cand.empty()) cand.push_back(std::min(std::max(pos, 0), n - 1));
+		int j = cand[std::uniform_int_distribution<int>(0, int(cand.size()) - 1)(rng)];
+		if (!used[j]) { used[j] = true; nUsed++; }
+		int id = ids[j];
+		recentIds.push_back(id);
+		if (recentIds.size() > 32) recentIds.pop_front();
+		recentBase.push_back(id % nBase);
+		if (recentBase.size() > size_t(std::min(8, std::max(1, nBase / 3)))) recentBase.pop_front();
+		outLoud = loud[j];
+		return id;
 	}
 };
 
-// how loud a press is (0..1 gain) from the time since the previous press
-inline float spamGain(double dt, int streak, float minGain) {
-	if (minGain >= 1) return 1;
-	const double slow = 0.15, fast = 0.06;
-	if (dt >= slow) return 1;
-	double f = dt > fast ? std::log(dt / fast) / std::log(slow / fast) : 0;
-	f = f * f * (3 - 2 * f);
-	double g = minGain + (1 - minGain) * f;
-	if (streak > 4) g *= std::max(0.85, 1 - 0.03 * (streak - 4));
-	return float(g);
-}
-
-struct Variation { float pitch, gainDB; };
-inline const Variation kVariations[3] = {{0.f, 0.f}, {0.012f, 1.0f}, {0.025f, 2.0f}};
-
 struct Play {
-	void* sound = nullptr; // sound to play
-	float gain = 1;        // linear volume multiplier
-	float pitch = 1;       // playback speed/pitch multiplier
-	double delay = 0;      // seconds to wait before playing (late releases)
-	bool cutPrevious = false;
+	int list = 0;         // 0 clicks, 1 releases, 2 softclicks, 3 softreleases
+	int base = -1;        // recorded sound index in that list
+	int variation = 0;    // variation id (variation % listSize == base for presses)
+	int pressList = 0;    // for releases: the list/variation of its press (to vary alike)
+	int pressVariation = 0;
+	float gain = 1;       // linear volume multiplier
+	double delay = 0;     // seconds to wait before playing
+	bool cutPrevious = true;
 };
 
 class Engine {
 public:
 	std::vector<Sound> clicks, releases, softClicks, softReleases;
-	float spamMinGain = 0.38f; // "Like your reference"
-	int variation = 1;
+	float spamMinDB = -8.4f;  // "Like a real hand"
+	float gainVarDB = 1.0f;   // random loudness difference per click
+	int variations = 10000;
 	bool playReleases = true;
 
 	void load() {
-		cb.build(clicks); rb.build(releases); scb.build(softClicks); srb.build(softReleases);
+		cb.build(clicks, variations);
+		rb.build(releases, variations);
+		scb.build(softClicks, variations);
+		srb.build(softReleases, variations);
 		resetAll();
 	}
 	bool ready() const { return !cb.empty(); }
 	void resetAll() { for (auto& p : players) p = PlayerState{}; }
+
+	// press loudness (dB) from how long the finger was up
+	float upTimeDB(double up) const {
+		if (up >= 0.15) return 0;
+		double f = up > 0.04 ? std::log(up / 0.04) / std::log(0.15 / 0.04) : 0;
+		f = f * f * (3 - 2 * f);
+		float db = float(spamMinDB * (1 - f));
+		if (up < 0.025) db += spamMinDB < 0 ? -3.f : 0.f; // micro
+		return db;
+	}
+	// release loudness change from hold time
+	static float holdDB(double hold) {
+		if (hold < 0.06) return 2.f;
+		if (hold < 0.12) return float(2 * (0.12 - hold) / 0.06);
+		return float(-2 * std::min(1.0, (hold - 0.12) / 0.18));
+	}
 
 	std::optional<Play> press(int player, double t) {
 		if (cb.empty()) return std::nullopt;
@@ -160,13 +170,11 @@ public:
 		double dt = t - s.lastPress;
 		s.ghost = dt < 0.025;
 		if (s.ghost) return std::nullopt;
-		s.streak = dt < 0.22 ? s.streak + 1 : 0;
-		float g = spamGain(dt, s.streak, spamMinGain);
-		float rel = 20 * std::log10(g);
-		const Variation& v = kVariations[std::clamp(variation, 0, 2)];
-		if (v.gainDB > 0) {
-			std::normal_distribution<float> nd(0, v.gainDB / 2);
-			rel += std::clamp(nd(rng), -v.gainDB, v.gainDB);
+		double up = t - s.lastRelease;
+		float rel = upTimeDB(up);
+		if (gainVarDB > 0) {
+			std::normal_distribution<float> nd(0, gainVarDB / 2);
+			rel += std::clamp(nd(rng), -gainVarDB, gainVarDB);
 		}
 		if (dt < 0.8) { // climb back gradually after quiet clicks
 			float maxRise = float(2 + 8 * dt);
@@ -174,22 +182,20 @@ public:
 			rel = std::max(rel, s.rel - 8);
 		}
 		s.rel = rel;
-		s.lastPress = t;
-		s.soft = g < 0.7f;
-		bool useSoft = s.soft && !scb.empty();
-		Bank& b = useSoft ? scb : cb;
-		auto& list = useSoft ? softClicks : clicks;
+		s.lastPress = s.pressAt = t;
+		bool soft = up < 0.15 && !scb.empty();
+		Bank& b = soft ? scb : cb;
 		float target = cb.ref + rel, l = 0;
-		int i = b.pick(target, rng, l);
+		int id = b.pick(target, rng, l);
 		float gain = std::clamp(std::pow(10.f, (target - l) / 20.f), 0.03f, 2.0f);
-		s.pitch = 1 + std::uniform_real_distribution<float>(-1, 1)(rng) * v.pitch;
+		s.list = soft ? 2 : 0;
+		s.variation = id;
 		s.gain = gain;
-		s.partner = list[i].partner >= 0 ? &(useSoft ? softReleases : releases)[list[i].partner] : nullptr;
 		Play p;
-		p.sound = list[i].handle;
+		p.list = s.list;
+		p.base = id % b.nBase;
+		p.variation = id;
 		p.gain = gain;
-		p.pitch = s.pitch;
-		p.cutPrevious = true;
 		return p;
 	}
 
@@ -197,33 +203,40 @@ public:
 		PlayerState& s = players[player & 1];
 		if (!s.down) return std::nullopt;
 		s.down = false;
+		s.lastRelease = t;
 		if (s.ghost || !playReleases) return std::nullopt;
 		Play p;
-		p.delay = std::max(0.0, s.lastPress + 0.035 - t); // a finger needs ~35 ms to let go
-		p.pitch = s.pitch;
-		p.cutPrevious = true;
-		if (s.partner) { // the release recorded with this press
-			p.sound = s.partner->handle;
-			p.gain = s.gain;
+		p.delay = std::max(0.0, s.pressAt + 0.035 - t);
+		p.pressList = s.list;
+		p.pressVariation = s.variation;
+		float adj = std::pow(10.f, holdDB(t - s.pressAt) / 20.f);
+		auto const& presses = s.list == 2 ? softClicks : clicks;
+		int pb = s.variation % int(presses.size());
+		if (presses[pb].partner >= 0) { // the release recorded with this click
+			p.list = s.list == 2 ? 3 : 1;
+			p.base = presses[pb].partner;
+			p.variation = s.variation;
+			p.gain = s.gain * adj;
 			return p;
 		}
-		Bank& b = (s.soft && !srb.empty()) ? srb : rb;
-		auto& list = (s.soft && !srb.empty()) ? softReleases : releases;
+		bool soft = s.list == 2 && !srb.empty();
+		Bank& b = soft ? srb : rb;
 		if (b.empty()) return std::nullopt;
-		float target = rb.empty() ? b.ref + s.rel : rb.ref + s.rel, l = 0;
-		int i = b.pick(target, rng, l);
-		p.sound = list[i].handle;
-		p.gain = std::clamp(std::pow(10.f, (target - l) / 20.f), 0.03f, 2.0f);
+		float target = rb.ref + s.rel, l = 0;
+		int id = b.pick(target, rng, l);
+		p.list = soft ? 3 : 1;
+		p.base = id % b.nBase;
+		p.variation = id;
+		p.gain = std::clamp(std::pow(10.f, (target - l) / 20.f), 0.03f, 2.0f) * adj;
 		return p;
 	}
 
 private:
 	struct PlayerState {
-		bool down = false, ghost = false, soft = false;
-		double lastPress = -10;
-		float rel = 0, gain = 1, pitch = 1;
-		int streak = 0;
-		Sound* partner = nullptr;
+		bool down = false, ghost = false;
+		double lastPress = -10, lastRelease = -10, pressAt = -10;
+		float rel = 0, gain = 1;
+		int list = 0, variation = 0;
 	};
 	PlayerState players[2];
 	Bank cb, rb, scb, srb;

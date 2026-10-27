@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.0.0",
+	"version": "v1.1.0",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -35,10 +35,24 @@
 		},
 		"variation": {
 			"name": "Variation",
-			"description": "Tiny pitch and volume differences on every click, on top of using a different recorded sound each time.",
+			"description": "How different each variation is: blends of similar recorded clicks plus small pitch, tone, hit and ring changes.",
 			"type": "string",
 			"default": "Natural (recommended)",
 			"one-of": ["Off", "Natural (recommended)", "More"]
+		},
+		"variations": {
+			"name": "Click variations",
+			"description": "How many different click variations to make from the recorded clicks. Each one is used once before any repeats.",
+			"type": "int",
+			"default": 10000,
+			"min": 170,
+			"max": 100000
+		},
+		"clean-tone": {
+			"name": "Clean tone",
+			"description": "Removes the desk 'boom' so clicks sound crisp instead of clunky.",
+			"type": "bool",
+			"default": true
 		},
 		"releases": {
 			"name": "Release sounds",

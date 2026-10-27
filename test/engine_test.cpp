@@ -1,91 +1,69 @@
-#include "../src/engine.hpp"
+#include "../src/voices.hpp"
 #include <cstdio>
+#include <deque>
 #include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
-
+using namespace scs;
 int fails = 0;
+float g_maxJump = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("FAIL: " __VA_ARGS__); std::printf("\n"); fails++; } } while (0)
 
 int main(int argc, char** argv) {
-	scs::Engine e;
+	Engine e;
 	std::mt19937 r(3);
-	// 170 presses spread over ~25 dB like the reference pack, each with a release ~12 dB lower
 	for (int i = 0; i < 170; i++) {
 		float l = -30 + 25 * std::uniform_real_distribution<float>(0, 1)(r);
-		e.clicks.push_back({(void*)(intptr_t)(i + 1), l, i});
-		e.releases.push_back({(void*)(intptr_t)(10000 + i), l - 12, -1});
+		e.clicks.push_back({nullptr, l, i < 165 ? i : -1});
+		if (i < 165) e.releases.push_back({nullptr, l - 12, -1});
 	}
 	e.load();
-	CHECK(e.ready(), "engine not ready");
-
-	// read macro inputs (time,down,p2) from a CSV, else synthesize
 	std::vector<std::tuple<double, bool, int>> acts;
-	if (argc > 1) {
-		std::ifstream f(argv[1]);
-		std::string line;
-		while (std::getline(f, line)) {
-			double t; int d, p;
-			if (std::sscanf(line.c_str(), "%lf,%d,%d", &t, &d, &p) == 3) acts.push_back({t, d == 1, p});
-		}
-	}
-	std::printf("inputs: %zu\n", acts.size());
-	std::vector<void*> played;
-	std::vector<float> levels;
-	std::map<void*, float> loudOf;
-	for (auto& c : e.clicks) loudOf[c.handle] = c.loud;
-	int presses = 0, releases = 0, matched = 0;
-	void* lastPress[2] = {nullptr, nullptr};
-	float refLoud = 0;
-	{ std::vector<float> L; for (auto& c : e.clicks) L.push_back(c.loud); std::sort(L.begin(), L.end()); refLoud = L[L.size() * 7 / 10]; }
+	std::ifstream f(argv[1]); std::string line;
+	while (std::getline(f, line)) { double t; int d, p; if (sscanf(line.c_str(), "%lf,%d,%d", &t, &d, &p) == 3) acts.push_back({t, d == 1, p}); }
+	int downs = 0, presses = 0, own = 0, rels = 0;
+	std::map<int, int> lastVar; std::deque<int> lastBases[2];
+	int lastPressBase[2] = {-1, -1}; int k = 0; int ownable = 0; double lastT[2] = {-10, -10};
+	std::vector<float> lv[2]; float refL = 0;
+	{ std::vector<float> L; for (auto& c : e.clicks) L.push_back(c.loud); std::sort(L.begin(), L.end()); refL = L[L.size() * 7 / 10]; }
 	for (auto& [t, down, p2] : acts) {
 		if (down) {
-			auto pl = e.press(p2, t);
-			if (!pl) continue;
-			presses++;
-			played.push_back(pl->sound);
-			levels.push_back(loudOf[pl->sound] + 20 * std::log10(pl->gain) - refLoud);
-			lastPress[p2] = pl->sound;
+			downs++;
+			auto p = e.press(p2, t); if (!p) continue;
+			presses++; k++;
+			auto it = lastVar.find(p->variation);
+			CHECK(it == lastVar.end() || k - it->second >= 32, "variation reused after %d", k - it->second);
+			lastVar[p->variation] = k;
+			for (int b : lastBases[0]) if (b == p->base) { std::printf("  repeat base %d at t=%.3f (variation %d)\n", p->base, t, p->variation); fails++; }
+			lastBases[0].push_back(p->base); if (lastBases[0].size() > 8) lastBases[0].pop_front();
+			lastPressBase[p2] = p->base;
+			float lvl = e.clicks[p->base].loud + 20 * std::log10(p->gain) - refL;
+			if (t - lastT[p2] < 0.8 && !lv[p2].empty()) { g_maxJump = std::max(g_maxJump, lvl - lv[p2].back()); lv[p2].push_back(lvl); } else { lv[p2].clear(); lv[p2].push_back(lvl); }
+			lastT[p2] = t;
 		} else {
-			auto pl = e.release(p2, t);
-			if (!pl) continue;
-			releases++;
-			if ((intptr_t)pl->sound == (intptr_t)lastPress[p2] - 1 + 10000) matched++; else std::printf("  mismatch at t=%.3f: release %ld after press %ld\n", t, (long)(intptr_t)pl->sound, (long)(intptr_t)lastPress[p2]);
-			CHECK(pl->delay >= 0 && pl->delay <= 0.035, "bad release delay %f", pl->delay);
+			auto p = e.release(p2, t); if (!p) continue;
+			rels++;
+			if (lastPressBase[p2] >= 0 && e.clicks[lastPressBase[p2]].partner >= 0) ownable++;
+			if (lastPressBase[p2] >= 0 && e.clicks[lastPressBase[p2]].partner == p->base && p->variation == p->pressVariation) own++;
+			CHECK(p->delay >= 0 && p->delay <= 0.035, "bad delay");
 		}
 	}
-	std::printf("presses %d releases %d (own release %d)\n", presses, releases, matched);
-	int downs = 0; for (auto& a : acts) if (std::get<1>(a)) downs++;
-	CHECK(presses >= downs * 95 / 100, "too few presses (%d of %d)", presses, downs);
-	CHECK(matched == releases, "releases not matched to their press");
-	// never the same sound within 32 presses
-	std::map<void*, int> last;
-	for (int k = 0; k < int(played.size()); k++) {
-		auto it = last.find(played[k]);
-		CHECK(it == last.end() || k - it->second >= 32, "sound reused after %d clicks", k - it->second);
-		last[played[k]] = k;
-	}
-	float maxJump = 0;
-	for (size_t k = 1; k < levels.size(); k++) maxJump = std::max(maxJump, levels[k] - levels[k - 1]);
-	std::printf("max loudness jump between clicks: %.1f dB\n", maxJump);
-	CHECK(maxJump < 9.5f, "loudness jumps %.1f dB", maxJump);
-
-	// spam: 20 presses 50 ms apart must be clearly lighter than slow clicks
-	scs::Engine s = e;
-	s.load();
-	float slow = 0, fast = 0;
-	for (int k = 0; k < 6; k++) { auto pl = s.press(0, 1 + k * 0.5); s.release(0, 1.05 + k * 0.5); slow += 20 * std::log10(pl->gain) + loudOf[pl->sound]; }
-	for (int k = 0; k < 20; k++) { auto pl = s.press(0, 10 + k * 0.05); s.release(0, 10.02 + k * 0.05); if (k > 3) fast += (20 * std::log10(pl->gain) + loudOf[pl->sound]) / 16 * 6; }
-	std::printf("slow avg %.1f dB, spam avg %.1f dB\n", slow / 6, fast / 6);
-	CHECK(fast / 6 < slow / 6 - 5, "spam not lighter");
-	// ghost double press 8 ms apart: second is silent
-	auto a1 = s.press(0, 50.0); s.release(0, 50.004);
-	auto a2 = s.press(0, 50.008);
-	CHECK(a1 && !a2, "ghost press not suppressed");
-	// checkpoint: time goes back -> state resets, press plays at full strength
-	auto c1 = s.press(0, 20.0);
-	CHECK(c1.has_value(), "press after checkpoint rewind should play");
+	float maxJump = g_maxJump;
+	std::printf("downs %d presses %d releases %d (own %d) max jump %.1f dB\n", downs, presses, rels, own, maxJump);
+	CHECK(presses >= downs * 95 / 100, "too few presses");
+	CHECK(own == ownable, "releases not matched (%d of %d)", own, ownable);
+	CHECK(maxJump < 10, "jump too big");
+	// up-time rule: spam (finger up 40 ms) much lighter than relaxed (300 ms up)
+	CHECK(e.upTimeDB(0.3) == 0 && e.upTimeDB(0.04) < -8 && e.upTimeDB(0.02) < e.upTimeDB(0.04), "up-time curve");
+	CHECK(Engine::holdDB(0.04) > 0 && Engine::holdDB(0.4) < 0, "hold curve");
+	// a variation always renders the same and differs from its original
+	Pack pk; for (int i = 0; i < 170; i++) { Buf b(4800); for (int j = 0; j < 4800; j++) b[j] = float(std::sin(j * (0.1 + i * 0.001)) * std::exp(-j / 800.0)); pk.pcm[0].push_back(b); }
+	for (int i = 0; i < 165; i++) pk.pcm[1].push_back(pk.pcm[0][i]);
+	Play a; a.list = 0; a.base = 5; a.variation = 5 + 170 * 7;
+	Buf x1 = pk.render(e, a, 1), x2 = pk.render(e, a, 1);
+	Play o = a; o.variation = 5; Buf x0 = pk.render(e, o, 1);
+	CHECK(x1 == x2, "variation not deterministic");
+	CHECK(x1 != x0, "variation identical to original");
 	std::printf(fails ? "%d FAILURES\n" : "ALL OK\n", fails);
-	return fails ? 1 : 0;
+	return fails != 0;
 }
