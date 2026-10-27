@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.7.1",
+	"version": "v1.8.0",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -134,6 +134,59 @@
 			"description": "Optional: any clickpack folder (with player1\\\\clicks, or clicks + releases folders). When set, it's used instead of the Sounds setting.",
 			"type": "string",
 			"default": ""
+		},
+		"macro-title": {
+			"type": "title",
+			"name": "Macro player"
+		},
+		"macro-file": {
+			"name": "Macro file",
+			"description": "The macro to play: xdBot or Mega Hack <cy>.gdr</c>, or Mega Hack <cy>.gdr2</c>. No converting needed. Its clicks get Smart Click Sounds like your own.",
+			"type": "file",
+			"default": "",
+			"control": {
+				"dialog": "open",
+				"filters": [
+					{
+						"files": [
+							"*.gdr",
+							"*.gdr2",
+							"*.json"
+						],
+						"description": "GD macros"
+					}
+				]
+			}
+		},
+		"macro-play": {
+			"name": "Play the macro",
+			"description": "Plays the macro file in levels (restarts the level from the start). Doesn't play in practice mode.",
+			"type": "bool",
+			"default": false
+		},
+		"macro-keybind": {
+			"name": "Start/stop macro key",
+			"description": "Turns the macro player on or off anywhere.",
+			"type": "keybind",
+			"default": "F7"
+		},
+		"macro-fixes": {
+			"name": "Position fixes",
+			"description": "Uses xdBot's saved player positions to keep the run exactly on track (recommended).",
+			"type": "bool",
+			"default": true
+		},
+		"macro-ignore-input": {
+			"name": "Ignore my clicks",
+			"description": "While a macro plays, your own clicks don't affect the run.",
+			"type": "bool",
+			"default": true
+		},
+		"macro-label": {
+			"name": "Show 'Macro' on screen",
+			"description": "A small label in the corner while a macro plays.",
+			"type": "bool",
+			"default": true
 		}
 	}
 }

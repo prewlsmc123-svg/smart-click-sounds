@@ -365,21 +365,27 @@ class $modify(SCSPlayer, PlayerObject) {
 	}
 };
 
+#include "player.hpp" // built-in macro player (.gdr / .gdr2)
+
 class $modify(SCSPlayLayer, PlayLayer) {
 	bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
 		if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
 		ensureLoaded(); // load the pack before the first click, not during it
 		g_engine.resetAll();
 		startRoomTone();
+		mp::addLabel(this);
+		mp::start(this, false);
 		return true;
 	}
 	void onQuit() {
 		stopRoomTone();
+		mp::g_label = nullptr;
 		PlayLayer::onQuit();
 	}
 	void resetLevel() {
 		PlayLayer::resetLevel();
 		g_engine.resetAll();
+		if (mp::active()) mp::seek(mp::frameOf(this));
 	}
 };
 
@@ -398,4 +404,19 @@ $on_mod(Loaded) {
 	listenForKeybindSettingPresses("menu-keybind", [](Keybind const&, bool down, bool repeat, double) {
 		if (down && !repeat) openSettingsPopup(Mod::get());
 	});
+	// F7 (rebindable) starts/stops the macro player
+	listenForKeybindSettingPresses("macro-keybind", [](Keybind const&, bool down, bool repeat, double) {
+		if (down && !repeat) Mod::get()->setSettingValue<bool>("macro-play", !mp::wanted());
+	});
+	listenForSettingChanges<bool>("macro-play", [](bool on) {
+		if (on) mp::start(PlayLayer::get(), true);
+		else {
+			mp::notify("Macro stopped");
+			mp::stop(PlayLayer::get());
+		}
+	});
+	listenForSettingChanges<std::filesystem::path>("macro-file", [](std::filesystem::path const&) {
+		if (mp::wanted()) mp::start(PlayLayer::get(), true);
+	});
+	listenForSettingChanges<bool>("macro-label", [](bool) { mp::updateLabel(); });
 }
