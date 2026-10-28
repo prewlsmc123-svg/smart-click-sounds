@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.8.1",
+	"version": "v1.8.2",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -160,7 +160,7 @@
 		},
 		"macro-play": {
 			"name": "Play the macro",
-			"description": "Plays the macro file in levels (restarts the level from the start). Doesn't play in practice mode.",
+			"description": "Plays the macro file in levels. Turned on in the middle of an attempt, it starts with your next attempt (no restart). Doesn't play in practice mode.",
 			"type": "bool",
 			"default": false
 		},

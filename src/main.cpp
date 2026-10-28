@@ -385,7 +385,7 @@ class $modify(SCSPlayLayer, PlayLayer) {
 	void resetLevel() {
 		PlayLayer::resetLevel();
 		g_engine.resetAll();
-		if (mp::active()) mp::seek(mp::frameOf(this));
+		mp::onReset(this);
 	}
 };
 
@@ -409,7 +409,7 @@ $on_mod(Loaded) {
 		if (down && !repeat) Mod::get()->setSettingValue<bool>("macro-play", !mp::wanted());
 	});
 	listenForSettingChanges<bool>("macro-play", [](bool on) {
-		if (on) mp::start(PlayLayer::get(), true);
+		if (on) mp::start(PlayLayer::get(), true); // waits for the next attempt
 		else mp::stop(PlayLayer::get());
 	});
 	listenForSettingChanges<std::filesystem::path>("macro-file", [](std::filesystem::path const&) {

@@ -18,13 +18,14 @@ static std::string g_loadedPath;
 static std::filesystem::file_time_type g_loadedTime{};
 static size_t g_input = 0, g_fix = 0;
 static int g_prevFrame = -1;
-static bool g_firstAttempt = true;
+static bool g_waiting = false; // turned on mid-attempt: starts with the next attempt
 static bool g_macroInput = false;
 static bool g_practiceWarned = false;
 static CCLabelBMFont* g_label = nullptr;
 
 static bool wanted() { return Mod::get()->getSettingValue<bool>("macro-play"); }
 static bool active() { return wanted() && g_macro.has_value(); }
+static bool playingNow() { return active() && !g_waiting; }
 
 static std::filesystem::path filePath() {
 	return Mod::get()->getSettingValue<std::filesystem::path>("macro-file");
@@ -82,7 +83,8 @@ static void updateLabel() {
 	if (!g_label) return;
 	bool on = active();
 	g_label->setVisible(on && Mod::get()->getSettingValue<bool>("macro-label"));
-	if (on) g_label->setString(("Macro: " + (g_macro->levelName.empty() ? std::string("playing") : g_macro->levelName)).c_str());
+	if (on) g_label->setString(g_waiting ? "Macro: next attempt"
+	                                     : ("Macro: " + (g_macro->levelName.empty() ? std::string("playing") : g_macro->levelName)).c_str());
 }
 
 static void addLabel(PlayLayer* pl) {
@@ -97,20 +99,25 @@ static void addLabel(PlayLayer* pl) {
 	updateLabel();
 }
 
-// called when entering a level and when playback is switched on
-static void start(PlayLayer* pl, bool restart) {
-	g_firstAttempt = true;
+// called when entering a level and when playback is switched on. Never restarts
+// the level: switched on in the middle of an attempt, it waits for the next one.
+static void start(PlayLayer* pl, bool midLevel) {
 	g_practiceWarned = false;
-	if (!wanted()) { updateLabel(); return; }
-	if (!loadMacro()) { updateLabel(); return; }
-	updateLabel();
-	if (!pl) return;
-	if (restart) {
-		pl->m_player1->releaseAllButtons();
-		pl->m_player2->releaseAllButtons();
-		pl->resetLevelFromStart();
+	g_waiting = false;
+	if (!wanted() || !loadMacro()) { updateLabel(); return; }
+	if (pl) {
+		g_waiting = midLevel && frameOf(pl) > 2;
+		seek(frameOf(pl));
 	}
+	updateLabel();
+}
+
+// a new attempt began (death, restart, checkpoint)
+static void onReset(PlayLayer* pl) {
+	if (!active()) return;
+	g_waiting = false;
 	seek(frameOf(pl));
+	updateLabel();
 }
 
 static void stop(PlayLayer* pl) {
@@ -159,7 +166,7 @@ class $modify(SCSMacroLayer, GJBaseGameLayer) {
 
 	void processCommands(float dt, bool isHalfTick, bool isLastTick) {
 		auto pl = PlayLayer::get();
-		if (!pl || static_cast<GJBaseGameLayer*>(pl) != this || !mp::active())
+		if (!pl || static_cast<GJBaseGameLayer*>(pl) != this || !mp::playingNow())
 			return GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 		if (pl->m_isPracticeMode) { // checkpoints would break the run: don't play there
 			if (!mp::g_practiceWarned) {
@@ -169,14 +176,6 @@ class $modify(SCSMacroLayer, GJBaseGameLayer) {
 			return GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 		}
 		int frame = mp::frameOf(pl);
-		// like xdBot: restart once at the start so the run begins from a clean state
-		if (frame > 2 && mp::g_firstAttempt) {
-			mp::g_firstAttempt = false;
-			if (!pl->m_levelEndAnimationStarted) {
-				pl->resetLevel();
-				return;
-			}
-		}
 		if (mp::g_prevFrame == frame && frame != 0) // one step per macro frame
 			return GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 		GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
@@ -189,7 +188,7 @@ class $modify(SCSMacroLayer, GJBaseGameLayer) {
 	// while a macro plays, your own clicks don't interfere with the run
 	void handleButton(bool down, int button, bool isPlayer1) {
 		auto pl = PlayLayer::get();
-		if (pl && static_cast<GJBaseGameLayer*>(pl) == this && mp::active() && !mp::g_macroInput && !pl->m_isPracticeMode &&
+		if (pl && static_cast<GJBaseGameLayer*>(pl) == this && mp::playingNow() && !mp::g_macroInput && !pl->m_isPracticeMode &&
 		    Mod::get()->getSettingValue<bool>("macro-ignore-input"))
 			return;
 		GJBaseGameLayer::handleButton(down, button, isPlayer1);
