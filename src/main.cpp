@@ -410,10 +410,7 @@ $on_mod(Loaded) {
 	});
 	listenForSettingChanges<bool>("macro-play", [](bool on) {
 		if (on) mp::start(PlayLayer::get(), true);
-		else {
-			mp::notify("Macro stopped");
-			mp::stop(PlayLayer::get());
-		}
+		else mp::stop(PlayLayer::get());
 	});
 	listenForSettingChanges<std::filesystem::path>("macro-file", [](std::filesystem::path const&) {
 		if (mp::wanted()) mp::start(PlayLayer::get(), true);

@@ -97,17 +97,6 @@ static void addLabel(PlayLayer* pl) {
 	updateLabel();
 }
 
-static void describe(PlayLayer* pl) {
-	if (!g_macro) return;
-	auto& m = *g_macro;
-	std::string who = m.author.empty() ? m.bot : m.author;
-	notify("Playing macro: " + (m.levelName.empty() ? std::string("macro") : m.levelName) + (who.empty() ? "" : " by " + who) + " (" +
-	           std::to_string(m.presses()) + " clicks)",
-	       NotificationIcon::Success);
-	if (pl && pl->m_level && m.levelId && pl->m_level->m_levelID.value() && m.levelId != int64_t(pl->m_level->m_levelID.value()))
-		notify("This macro was made for level " + std::to_string(m.levelId) + ", not this one", NotificationIcon::Warning);
-}
-
 // called when entering a level and when playback is switched on
 static void start(PlayLayer* pl, bool restart) {
 	g_firstAttempt = true;
@@ -116,7 +105,6 @@ static void start(PlayLayer* pl, bool restart) {
 	if (!loadMacro()) { updateLabel(); return; }
 	updateLabel();
 	if (!pl) return;
-	describe(pl);
 	if (restart) {
 		pl->m_player1->releaseAllButtons();
 		pl->m_player2->releaseAllButtons();
