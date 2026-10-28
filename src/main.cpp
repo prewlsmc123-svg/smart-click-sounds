@@ -373,13 +373,11 @@ class $modify(SCSPlayLayer, PlayLayer) {
 		ensureLoaded(); // load the pack before the first click, not during it
 		g_engine.resetAll();
 		startRoomTone();
-		mp::addLabel(this);
 		mp::start(this, false);
 		return true;
 	}
 	void onQuit() {
 		stopRoomTone();
-		mp::g_label = nullptr;
 		PlayLayer::onQuit();
 	}
 	void resetLevel() {
@@ -415,5 +413,4 @@ $on_mod(Loaded) {
 	listenForSettingChanges<std::filesystem::path>("macro-file", [](std::filesystem::path const&) {
 		if (mp::wanted()) mp::start(PlayLayer::get(), true);
 	});
-	listenForSettingChanges<bool>("macro-label", [](bool) { mp::updateLabel(); });
 }

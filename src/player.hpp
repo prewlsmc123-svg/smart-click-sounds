@@ -21,7 +21,6 @@ static int g_prevFrame = -1;
 static bool g_waiting = false; // turned on mid-attempt: starts with the next attempt
 static bool g_macroInput = false;
 static bool g_practiceWarned = false;
-static CCLabelBMFont* g_label = nullptr;
 
 static bool wanted() { return Mod::get()->getSettingValue<bool>("macro-play"); }
 static bool active() { return wanted() && g_macro.has_value(); }
@@ -79,37 +78,16 @@ static void seek(int frame) {
 	g_prevFrame = -1;
 }
 
-static void updateLabel() {
-	if (!g_label) return;
-	bool on = active();
-	g_label->setVisible(on && Mod::get()->getSettingValue<bool>("macro-label"));
-	if (on) g_label->setString(g_waiting ? "Macro: next attempt"
-	                                     : ("Macro: " + (g_macro->levelName.empty() ? std::string("playing") : g_macro->levelName)).c_str());
-}
-
-static void addLabel(PlayLayer* pl) {
-	g_label = CCLabelBMFont::create("Macro", "bigFont.fnt");
-	g_label->setID("scs-macro-label"_spr);
-	g_label->setScale(0.3f);
-	g_label->setOpacity(110);
-	g_label->setAnchorPoint({0.f, 0.f});
-	g_label->setPosition({4.f, 4.f});
-	g_label->setZOrder(1000);
-	pl->addChild(g_label);
-	updateLabel();
-}
-
 // called when entering a level and when playback is switched on. Never restarts
 // the level: switched on in the middle of an attempt, it waits for the next one.
 static void start(PlayLayer* pl, bool midLevel) {
 	g_practiceWarned = false;
 	g_waiting = false;
-	if (!wanted() || !loadMacro()) { updateLabel(); return; }
+	if (!wanted() || !loadMacro()) return;
 	if (pl) {
 		g_waiting = midLevel && frameOf(pl) > 2;
 		seek(frameOf(pl));
 	}
-	updateLabel();
 }
 
 // a new attempt began (death, restart, checkpoint)
@@ -117,11 +95,9 @@ static void onReset(PlayLayer* pl) {
 	if (!active()) return;
 	g_waiting = false;
 	seek(frameOf(pl));
-	updateLabel();
 }
 
 static void stop(PlayLayer* pl) {
-	updateLabel();
 	if (!pl) return;
 	pl->m_player1->releaseAllButtons();
 	pl->m_player2->releaseAllButtons();

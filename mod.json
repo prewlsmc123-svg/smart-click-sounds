@@ -3,7 +3,7 @@
 	"gd": {
 		"win": "2.2081"
 	},
-	"version": "v1.8.2",
+	"version": "v1.8.3",
 	"id": "jav.smart-click-sounds",
 	"name": "Smart Click Sounds",
 	"developer": "jav",
@@ -179,12 +179,6 @@
 		"macro-ignore-input": {
 			"name": "Ignore my clicks",
 			"description": "While a macro plays, your own clicks don't affect the run.",
-			"type": "bool",
-			"default": true
-		},
-		"macro-label": {
-			"name": "Show 'Macro' on screen",
-			"description": "A small label in the corner while a macro plays.",
 			"type": "bool",
 			"default": true
 		}
